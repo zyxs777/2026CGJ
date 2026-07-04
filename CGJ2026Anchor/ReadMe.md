@@ -298,6 +298,7 @@ PVP：蓝方玩家控制，红方玩家控制。
 红方松开 Enter 或右 Ctrl：PVP 下释放足球
 红方右 Shift 或 /：PVP 下生成幻影球员
 M：切换 PVE / PVP 并重新开始
+F2：显示 / 隐藏手柄输入调试面板
 R：重置当前回合
 N：重新开始比赛并清空天赋
 方向键左右：三选一天赋界面切换选择
@@ -316,7 +317,43 @@ N：重新开始比赛并清空天赋
 PVE 下仍兼容任意手柄 A/B 操作蓝方
 ```
 
-手柄左右选择依赖旧 Input Manager 轴配置。代码会优先尝试：
+当前已接入 Unity New Input System：
+
+```text
+com.unity.inputsystem = 1.7.0
+Active Input Handling = Both
+```
+
+New Input System 可用时，代码会优先使用 `Gamepad.all`，并兼容部分只出现在 `Joystick.all` 的泛用手柄：
+
+```text
+Gamepad.all[0] -> 蓝方
+Gamepad.all[1] -> 红方
+buttonSouth -> A / 确认 / 抓球
+buttonEast -> B / 召唤幻影球员
+leftStick.x / rightStick.x -> 天赋左右选择
+
+如果设备只被识别为 Joystick：
+trigger / button0 -> A / 确认 / 抓球
+button1 / button2 -> B / 召唤幻影球员
+stick.x -> 天赋左右选择
+```
+
+PVE 下蓝方会读取任意已连接手柄，方便单手柄试玩。PVP 下会固定读取第 1 个可分离设备给蓝方、第 2 个可分离设备给红方。
+
+手柄读取优先级：
+
+```text
+1. Unity New Input System：Gamepad.all + Joystick.all
+2. Rewired：ReInput.controllers.Joysticks
+3. Unity 旧 Input Manager：只作为单手柄 / 蓝方 Any 兜底
+```
+
+如果手柄按键没有反应，运行时按 `F2` 打开输入调试面板，查看 New Input System 当前识别到的设备、A/B 对应的 control 名称和按下状态。
+如果 New Input System 显示设备数为 0，但 Rewired 能看到两个 Joystick，PVP 会使用 Rewired 的第 1 / 第 2 个 Joystick 区分蓝红双方。
+如果 New Input System 和 Rewired 都没有可分离设备，但 Legacy Input 里能看到手柄名称，PVP 会从 `Input.GetJoystickNames()` 中扫描 J1-J8，按第 1 个有名字的槽位给蓝方、第 2 个有名字的槽位给红方。PVE 下仍读取旧输入 Any，方便单手柄试玩。
+
+旧 Input Manager 仍作为兜底。若 New Input System 没有启用，左右选择会继续尝试：
 
 ```text
 Joystick1Horizontal / P1Horizontal
@@ -616,8 +653,8 @@ dotnet build Assembly-CSharp.csproj --no-restore -v:minimal -m:1 -p:BaseIntermed
 - 香蕉球代码保留但不在当前天赋池。
 - 幻影足球拦截目前是距离检测，不是物理碰撞回调；判断半径已经改为球员本体半径。
 - PVP 当前是“玩家控制抓球、蓄力、释放和幻影球员”，红方球员移动仍然是自动跑位。
-- PVP 手柄按钮按手柄编号隔离：手柄 1 控蓝方，手柄 2 控红方。
-- 手柄左右选择依赖 Input Manager 轴配置；未配置的轴会被捕获并静默忽略。
+- PVP 手柄优先使用 New Input System 的 `Gamepad.all + Joystick.all` 隔离；若 New Input System 为空，则使用 Rewired 的 Joystick 列表隔离。
+- 旧 Input Manager 只作为最后兜底；PVP 下旧输入按钮按 J1-J8 实际命名槽位分配，PVE 下才读取 Any。
 - 当前 README 记录的是 `KeepBallMoving` 原型部分，不覆盖项目里其它系统。
 
 ## 9. 后续建议

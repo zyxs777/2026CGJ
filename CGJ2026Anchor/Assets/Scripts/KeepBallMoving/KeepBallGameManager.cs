@@ -156,6 +156,7 @@ namespace KeepBallMoving
         private int selectedTalentIndex;
         private float nextTalentMoveInputTime;
         private bool rightStickHorizontalMissing;
+        private bool showInputDebug;
         private readonly HashSet<string> missingInputAxes = new HashSet<string>();
         private readonly TalentOption[] currentTalentOptions = new TalentOption[TalentChoiceCount];
         private readonly bool[] talentOptionTaken = new bool[TalentChoiceCount];
@@ -265,6 +266,11 @@ namespace KeepBallMoving
                 return;
             }
 
+            if (Input.GetKeyDown(KeyCode.F2))
+            {
+                showInputDebug = !showInputDebug;
+            }
+
             if (ball.State == BallState.Held)
             {
                 ball.TickHold(Time.deltaTime);
@@ -340,44 +346,71 @@ namespace KeepBallMoving
 
         private bool IsPrimaryActionDown(Team team)
         {
+            if (KeepBallNewInput.IsPrimaryDown(GetGamepadIndex(team), ShouldReadAnyGamepad(team)))
+            {
+                return true;
+            }
+
             if (team == Team.Red)
             {
                 return Input.GetKeyDown(redPrimaryKey) ||
                     Input.GetKeyDown(redAlternatePrimaryKey) ||
-                    Input.GetKeyDown(KeyCode.Joystick2Button0);
+                    KeepBallNewInput.IsLegacyPrimaryDown(GetGamepadIndex(team), false);
             }
 
             return Input.GetKeyDown(KeyCode.Space) ||
-                Input.GetKeyDown(KeyCode.Joystick1Button0) ||
-                (!IsPvpMode() && Input.GetKeyDown(KeyCode.JoystickButton0));
+                KeepBallNewInput.IsLegacyPrimaryDown(GetGamepadIndex(team), ShouldReadLegacyAnyGamepad(team));
         }
 
         private bool IsPrimaryActionUp(Team team)
         {
+            if (KeepBallNewInput.IsPrimaryUp(GetGamepadIndex(team), ShouldReadAnyGamepad(team)))
+            {
+                return true;
+            }
+
             if (team == Team.Red)
             {
                 return Input.GetKeyUp(redPrimaryKey) ||
                     Input.GetKeyUp(redAlternatePrimaryKey) ||
-                    Input.GetKeyUp(KeyCode.Joystick2Button0);
+                    KeepBallNewInput.IsLegacyPrimaryUp(GetGamepadIndex(team), false);
             }
 
             return Input.GetKeyUp(KeyCode.Space) ||
-                Input.GetKeyUp(KeyCode.Joystick1Button0) ||
-                (!IsPvpMode() && Input.GetKeyUp(KeyCode.JoystickButton0));
+                KeepBallNewInput.IsLegacyPrimaryUp(GetGamepadIndex(team), ShouldReadLegacyAnyGamepad(team));
         }
 
         private bool IsPhantomActionDown(Team team)
         {
+            if (KeepBallNewInput.IsPhantomDown(GetGamepadIndex(team), ShouldReadAnyGamepad(team)))
+            {
+                return true;
+            }
+
             if (team == Team.Red)
             {
                 return Input.GetKeyDown(redPhantomKey) ||
                     Input.GetKeyDown(redAlternatePhantomKey) ||
-                    Input.GetKeyDown(KeyCode.Joystick2Button1);
+                    KeepBallNewInput.IsLegacyPhantomDown(GetGamepadIndex(team), false);
             }
 
             return Input.GetKeyDown(KeyCode.Z) ||
-                Input.GetKeyDown(KeyCode.Joystick1Button1) ||
-                (!IsPvpMode() && Input.GetKeyDown(KeyCode.JoystickButton1));
+                KeepBallNewInput.IsLegacyPhantomDown(GetGamepadIndex(team), ShouldReadLegacyAnyGamepad(team));
+        }
+
+        private int GetGamepadIndex(Team team)
+        {
+            return team == Team.Blue ? 0 : 1;
+        }
+
+        private bool ShouldReadAnyGamepad(Team team)
+        {
+            return team == Team.Blue && !IsPvpMode();
+        }
+
+        private bool ShouldReadLegacyAnyGamepad(Team team)
+        {
+            return team == Team.Blue && !IsPvpMode();
         }
 
         private bool IsPvpMode()
@@ -560,7 +593,13 @@ namespace KeepBallMoving
 
         private float GetTeamHorizontalAxis(Team team)
         {
-            float axis = GetAxisRawSafe(team == Team.Blue ? "Joystick1Horizontal" : "Joystick2Horizontal");
+            float axis = KeepBallNewInput.GetHorizontal(GetGamepadIndex(team), ShouldReadAnyGamepad(team));
+            if (Mathf.Abs(axis) >= 0.55f)
+            {
+                return axis;
+            }
+
+            axis = GetAxisRawSafe(team == Team.Blue ? "Joystick1Horizontal" : "Joystick2Horizontal");
             if (Mathf.Abs(axis) >= 0.55f)
             {
                 return axis;
@@ -2809,6 +2848,28 @@ namespace KeepBallMoving
             {
                 DrawTalentSelection();
             }
+
+            if (showInputDebug)
+            {
+                DrawInputDebug();
+            }
+        }
+
+        private void DrawInputDebug()
+        {
+            GUIStyle debugStyle = new GUIStyle(GUI.skin.box)
+            {
+                alignment = TextAnchor.UpperLeft,
+                fontSize = 14,
+                normal = { textColor = Color.white },
+                wordWrap = false
+            };
+
+            string teamBinding = IsPvpMode()
+                ? "PVP: 设备1=蓝方 / 设备2=红方"
+                : "PVE: 任意设备=蓝方";
+            string debugText = $"{teamBinding}\n{KeepBallNewInput.GetDebugText()}{KeepBallNewInput.GetLegacyDebugText()}";
+            GUI.Box(new Rect(Screen.width - 560f, 86f, 544f, Mathf.Min(Screen.height - 110f, 420f)), debugText, debugStyle);
         }
 
         private void DrawGoalBanner()
