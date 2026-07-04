@@ -193,9 +193,9 @@ Hold 半径规则：
 
 ### 3.8 ShockwaveEffect.cs
 
-负责立场震荡波的视觉表现。
+兼容旧版立场震荡波的视觉表现。
 
-实际击退由 `KeepBallGameManager` 计算；`ShockwaveEffect` 只负责预制体视觉的扩散、淡出和销毁。
+实际击退由 `KeepBallGameManager` 计算。当前默认立场视觉使用粒子预制体 `waveEffectblue.prefab` / `waveEffectred.prefab`；如果某个特效预制体仍挂了 `ShockwaveEffect`，代码会继续调用它做扩散、淡出和销毁。
 
 ### 3.9 KeepBallTalentBadge.cs
 
@@ -515,8 +515,8 @@ PVP 模式下，红方 AI 自动接球和自动出球不会执行，但红方球
 - 护球立场：己方接球时触发。
 - 传球立场：己方传球时触发。
 - 震荡波视觉通过预制体实现。
-- 蓝方使用 `KeepBallBlueShockwave.prefab`。
-- 红方使用 `KeepBallRedShockwave.prefab`。
+- 蓝方使用 `waveEffectblue.prefab`。
+- 红方使用 `waveEffectred.prefab`。
 - 击退不是瞬间传送，而是通过 `PlayerAgent.KnockbackTo` 做短时间 Lerp。
 - 击退期间球员不会执行普通移动。
 
@@ -543,8 +543,8 @@ KeepBallPlayer.prefab
 KeepBallPlayer1.prefab
 KeepBallBall.prefab
 KeepBallPhantomBall.prefab
-KeepBallBlueShockwave.prefab
-KeepBallRedShockwave.prefab
+waveEffectblue.prefab
+waveEffectred.prefab
 KeepBallPhantomPlayer.prefab
 KeepBallTalentBadge.prefab
 GoalEffect.prefab
@@ -556,8 +556,8 @@ GoalEffect.prefab
 - `KeepBallPlayer1.prefab`：红方默认球员预制体，可用于挂不同 Animator。
 - `KeepBallBall.prefab`：普通足球预制体。
 - `KeepBallPhantomBall.prefab`：幻影足球预制体。
-- `KeepBallBlueShockwave.prefab`：蓝方立场特效。
-- `KeepBallRedShockwave.prefab`：红方立场特效。
+- `waveEffectblue.prefab`：蓝方立场冲击特效。
+- `waveEffectred.prefab`：红方立场冲击特效。
 - `KeepBallPhantomPlayer.prefab`：幻影球员预制体。
 - `KeepBallTalentBadge.prefab`：左右下角天赋条目 UI 预制体。
 - `GoalEffect.prefab`：进球瞬间生成在破门位置的世界特效。
@@ -596,13 +596,17 @@ forwardMoveSpeedMultiplier
 midfielderMoveSpeedMultiplier
 defenderMoveSpeedMultiplier
 holderMoveSpeedMultiplier
-separationRadius
-separationStrength
+sameTeamSeparationRadius
+sameTeamSeparationStrength
+opponentSeparationRadius
+opponentSeparationStrength
 redKickoffAutoHoldLockout
 redAutoHoldDelay
 redPassSpeed
 redReleaseSpeed
 ```
+
+球员移动时会做软分离，避免站位完全重叠。同队和敌队分别使用独立的分离半径与力度；红蓝双方都会避开对方球员。完全重叠时会使用一个稳定的备用方向把球员分开。
 
 ### 6.3 球员预制体视觉
 

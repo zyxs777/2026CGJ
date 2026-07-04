@@ -39,8 +39,8 @@ namespace KeepBallMoving
         [SerializeField] private PlayerAgent phantomPlayerPrefab;
         [SerializeField] private BallController ballPrefab;
         [SerializeField] private BallController phantomBallPrefab;
-        [SerializeField] private ShockwaveEffect blueShockwavePrefab;
-        [SerializeField] private ShockwaveEffect redShockwavePrefab;
+        [SerializeField] private GameObject blueShockwavePrefab;
+        [SerializeField] private GameObject redShockwavePrefab;
         [SerializeField] private KeepBallTalentBadge talentBadgePrefab;
         [SerializeField] private GameObject goalEffectPrefab;
 
@@ -59,8 +59,10 @@ namespace KeepBallMoving
         [SerializeField] private float midfielderMoveSpeedMultiplier = 1f;
         [SerializeField] private float defenderMoveSpeedMultiplier = 0.88f;
         [SerializeField] private float holderMoveSpeedMultiplier = 0.35f;
-        [SerializeField] private float separationRadius = 1.25f;
-        [SerializeField] private float separationStrength = 1.1f;
+        [SerializeField] private float sameTeamSeparationRadius = 1.25f;
+        [SerializeField] private float sameTeamSeparationStrength = 1.1f;
+        [SerializeField] private float opponentSeparationRadius = 1.1f;
+        [SerializeField] private float opponentSeparationStrength = 1.35f;
         [SerializeField] private float redKickoffAutoHoldLockout = 1.2f;
         [SerializeField] private float redAutoHoldDelay = 0.55f;
         [SerializeField] private float redPassSpeed = 11.5f;
@@ -180,8 +182,8 @@ namespace KeepBallMoving
         private const string DefaultPhantomPlayerPrefabPath = "KeepBallMoving/KeepBallPhantomPlayer";
         private const string DefaultBallPrefabPath = "KeepBallMoving/KeepBallBall";
         private const string DefaultPhantomBallPrefabPath = "KeepBallMoving/KeepBallPhantomBall";
-        private const string DefaultBlueShockwavePrefabPath = "KeepBallMoving/KeepBallBlueShockwave";
-        private const string DefaultRedShockwavePrefabPath = "KeepBallMoving/KeepBallRedShockwave";
+        private const string DefaultBlueShockwavePrefabPath = "KeepBallMoving/waveEffectblue";
+        private const string DefaultRedShockwavePrefabPath = "KeepBallMoving/waveEffectred";
         private const string DefaultTalentBadgePrefabPath = "KeepBallMoving/KeepBallTalentBadge";
         private const string DefaultGoalEffectPrefabPath = "KeepBallMoving/GoalEffect";
         private const string DefaultFieldVisualPrefabPath = "KeepBallMoving/KeepBallField";
@@ -710,12 +712,12 @@ namespace KeepBallMoving
 
             if (blueShockwavePrefab == null)
             {
-                blueShockwavePrefab = Resources.Load<ShockwaveEffect>(DefaultBlueShockwavePrefabPath);
+                blueShockwavePrefab = Resources.Load<GameObject>(DefaultBlueShockwavePrefabPath);
             }
 
             if (redShockwavePrefab == null)
             {
-                redShockwavePrefab = Resources.Load<ShockwaveEffect>(DefaultRedShockwavePrefabPath);
+                redShockwavePrefab = Resources.Load<GameObject>(DefaultRedShockwavePrefabPath);
             }
 
             if (talentBadgePrefab == null)
@@ -1791,7 +1793,7 @@ namespace KeepBallMoving
             {
                 PlayerAgent player = bluePlayers[i];
                 Vector2 target = GetBlueSupportTarget(player, i);
-                MovePlayer(player, target, bluePlayers, blueMoveSpeed, deltaTime);
+                MovePlayer(player, target, Team.Blue, blueMoveSpeed, deltaTime);
             }
 
             for (int i = 0; i < redPlayers.Count; i++)
@@ -1799,7 +1801,7 @@ namespace KeepBallMoving
                 PlayerAgent player = redPlayers[i];
                 Vector2 target = GetRedPressureTarget(player, i);
                 float moveSpeed = IsPvpMode() ? redMoveSpeed : redMoveSpeed * Mathf.Lerp(0.65f, 1f, GetRedDimensionSkill(redMovementSkill));
-                MovePlayer(player, target, redPlayers, moveSpeed, deltaTime);
+                MovePlayer(player, target, Team.Red, moveSpeed, deltaTime);
             }
         }
 
@@ -1880,7 +1882,7 @@ namespace KeepBallMoving
             return ClampInsideField(Vector2.Lerp(shapeTarget, nearBallTarget, 0.72f));
         }
 
-        private void MovePlayer(PlayerAgent player, Vector2 target, List<PlayerAgent> teamPlayers, float speed, float deltaTime)
+        private void MovePlayer(PlayerAgent player, Vector2 target, Team team, float speed, float deltaTime)
         {
             if (kickoffPlayerLocked && player == lockedKickoffPlayer)
             {
@@ -1901,8 +1903,8 @@ namespace KeepBallMoving
             }
 
             Vector2 current = player.Position;
-            Vector2 separation = GetSeparation(player, teamPlayers);
-            Vector2 adjustedTarget = target + separation * separationStrength;
+            Vector2 separation = GetSeparation(player, team);
+            Vector2 adjustedTarget = target + separation;
             Vector2 next = Vector2.MoveTowards(current, adjustedTarget, speed * deltaTime);
             player.MoveTo(ClampInsideField(next));
         }
@@ -1991,26 +1993,48 @@ namespace KeepBallMoving
             return count;
         }
 
-        private Vector2 GetSeparation(PlayerAgent player, List<PlayerAgent> teamPlayers)
+        private Vector2 GetSeparation(PlayerAgent player, Team team)
         {
-            Vector2 push = Vector2.zero;
+            List<PlayerAgent> sameTeamPlayers = team == Team.Blue ? bluePlayers : redPlayers;
+            List<PlayerAgent> opponentPlayers = team == Team.Blue ? redPlayers : bluePlayers;
 
-            foreach (PlayerAgent other in teamPlayers)
+            Vector2 push = Vector2.zero;
+            AddSeparation(player, sameTeamPlayers, sameTeamSeparationRadius, sameTeamSeparationStrength, ref push);
+            AddSeparation(player, opponentPlayers, opponentSeparationRadius, opponentSeparationStrength, ref push);
+            return push;
+        }
+
+        private void AddSeparation(PlayerAgent player, List<PlayerAgent> players, float radius, float strength, ref Vector2 push)
+        {
+            float safeRadius = Mathf.Max(0.001f, radius);
+            foreach (PlayerAgent other in players)
             {
-                if (other == player)
+                if (other == null || other == player)
                 {
                     continue;
                 }
 
                 Vector2 difference = player.Position - other.Position;
                 float distance = difference.magnitude;
-                if (distance > 0.001f && distance < separationRadius)
+                if (distance >= safeRadius)
                 {
-                    push += difference.normalized * (1f - distance / separationRadius);
+                    continue;
                 }
-            }
 
-            return push;
+                Vector2 direction = distance > 0.001f
+                    ? difference / distance
+                    : GetFallbackSeparationDirection(player, other);
+
+                float distance01 = Mathf.Clamp01(distance / safeRadius);
+                push += direction * ((1f - distance01) * strength);
+            }
+        }
+
+        private Vector2 GetFallbackSeparationDirection(PlayerAgent player, PlayerAgent other)
+        {
+            int sign = player.GetInstanceID() < other.GetInstanceID() ? -1 : 1;
+            float teamSide = player.Team == Team.Blue ? -1f : 1f;
+            return new Vector2(teamSide, 0.35f * sign).normalized;
         }
 
         private int GetDistanceRank(PlayerAgent player, List<PlayerAgent> players, Vector2 target)
@@ -2533,16 +2557,32 @@ namespace KeepBallMoving
 
         private void CreateShockwaveVisual(Team owner, Vector2 center, float radius, Color fallbackColor)
         {
-            if (controlRangeSprite == null)
+            GameObject prefab = owner == Team.Blue ? blueShockwavePrefab : redShockwavePrefab;
+            if (prefab != null)
             {
+                GameObject effectObject = Instantiate(prefab, center, Quaternion.identity, transform);
+                effectObject.name = owner == Team.Blue ? "BlueTalentShockwave" : "RedTalentShockwave";
+
+                ShockwaveEffect effect = effectObject.GetComponent<ShockwaveEffect>();
+                if (effect == null)
+                {
+                    effect = effectObject.GetComponentInChildren<ShockwaveEffect>();
+                }
+
+                if (effect != null)
+                {
+                    effect.Initialize(controlRangeSprite, radius, shockwaveEffectDuration);
+                }
+                else
+                {
+                    Destroy(effectObject, GetParticleEffectLifetime(effectObject));
+                }
+
                 return;
             }
 
-            ShockwaveEffect prefab = owner == Team.Blue ? blueShockwavePrefab : redShockwavePrefab;
-            if (prefab != null)
+            if (controlRangeSprite == null)
             {
-                ShockwaveEffect effect = Instantiate(prefab, center, Quaternion.identity, transform);
-                effect.Initialize(controlRangeSprite, radius, shockwaveEffectDuration);
                 return;
             }
 
@@ -2557,6 +2597,20 @@ namespace KeepBallMoving
             renderer.sortingOrder = 32;
 
             Destroy(waveObject, shockwaveEffectDuration);
+        }
+
+        private float GetParticleEffectLifetime(GameObject effectObject)
+        {
+            float lifetime = Mathf.Max(0.01f, shockwaveEffectDuration);
+            ParticleSystem[] particleSystems = effectObject.GetComponentsInChildren<ParticleSystem>();
+            for (int i = 0; i < particleSystems.Length; i++)
+            {
+                ParticleSystem.MainModule main = particleSystems[i].main;
+                float duration = main.duration + main.startDelay.constantMax + main.startLifetime.constantMax;
+                lifetime = Mathf.Max(lifetime, duration);
+            }
+
+            return lifetime;
         }
 
         private void SpawnPhantomBall(Team owner, Vector2 origin, Vector2 direction, float speed)
