@@ -1,4 +1,5 @@
 using UnityEngine;
+using RGScript.ScriptsSkinSpecialDeals;
 
 namespace KeepBallMoving
 {
@@ -6,9 +7,13 @@ namespace KeepBallMoving
     {
         [SerializeField] private float maxSpeed = 22f;
         [SerializeField] private float minSpeed = 5f;
+        [SerializeField] private float releaseKickSpeedMultiplier = 1.35f;
+        [SerializeField] private float freeBallDeceleration = 7f;
+        [SerializeField] private float baseFastRotateSpeed = 360f;
 
         private Rigidbody2D body;
         private SpriteRenderer spriteRenderer;
+        private RotateAroundAxisBehaviour[] rotateBehaviours;
         private PlayerAgent holder;
         private float radius;
         private float holdRadius;
@@ -52,6 +57,7 @@ namespace KeepBallMoving
 
             spriteRenderer.color = Color.white;
             spriteRenderer.sortingOrder = 30;
+            rotateBehaviours = GetComponentsInChildren<RotateAroundAxisBehaviour>(true);
 
             transform.localScale = Vector3.one * (radius * 2f);
 
@@ -62,7 +68,7 @@ namespace KeepBallMoving
             }
 
             body.gravityScale = 0f;
-            body.drag = 0.12f;
+            body.drag = 0f;
             body.angularDrag = 0f;
             body.collisionDetectionMode = CollisionDetectionMode2D.Continuous;
             body.interpolation = RigidbodyInterpolation2D.Interpolate;
@@ -81,6 +87,7 @@ namespace KeepBallMoving
         {
             if (State != BallState.Free || body == null)
             {
+                UpdateFastRotateSpeed(0f);
                 return;
             }
 
@@ -94,13 +101,19 @@ namespace KeepBallMoving
 
             if (speed > maxSpeed)
             {
-                body.velocity = lastFreeDirection * maxSpeed;
+                speed = maxSpeed;
+            }
+            else if (speed > minSpeed)
+            {
+                speed = Mathf.MoveTowards(speed, minSpeed, freeBallDeceleration * Time.fixedDeltaTime);
             }
             else if (speed < minSpeed)
             {
-                body.velocity = lastFreeDirection * minSpeed;
+                speed = minSpeed;
             }
 
+            body.velocity = lastFreeDirection * speed;
+            UpdateFastRotateSpeed(speed);
             TickCurve(Time.fixedDeltaTime);
         }
 
@@ -127,6 +140,8 @@ namespace KeepBallMoving
             {
                 lastFreeDirection = velocity.normalized;
             }
+
+            UpdateFastRotateSpeed(velocity.magnitude);
         }
 
         public void BeginHold(PlayerAgent newHolder, float minHoldRadius, float angularSpeed)
@@ -152,6 +167,7 @@ namespace KeepBallMoving
             body.velocity = Vector2.zero;
             body.angularVelocity = 0f;
             body.bodyType = RigidbodyType2D.Kinematic;
+            UpdateFastRotateSpeed(0f);
 
             Vector2 heldPosition = GetHeldPosition();
             body.position = heldPosition;
@@ -169,6 +185,7 @@ namespace KeepBallMoving
             body.MovePosition(GetHeldPosition());
             body.velocity = Vector2.zero;
             body.angularVelocity = 0f;
+            UpdateFastRotateSpeed(0f);
         }
 
         private Vector2 GetHeldPosition()
@@ -257,9 +274,10 @@ namespace KeepBallMoving
             }
 
             body.bodyType = RigidbodyType2D.Dynamic;
-            body.velocity = direction.normalized * Mathf.Clamp(speed, minSpeed, maxSpeed);
+            body.velocity = direction.normalized * GetKickedSpeed(speed);
             body.angularVelocity = 0f;
             lastFreeDirection = direction.normalized;
+            UpdateFastRotateSpeed(body.velocity.magnitude);
         }
 
         public void FreezeForGoalPresentation(Vector2 position)
@@ -279,6 +297,7 @@ namespace KeepBallMoving
             body.position = position;
             body.velocity = Vector2.zero;
             body.angularVelocity = 0f;
+            UpdateFastRotateSpeed(0f);
         }
 
         public void ApplyCurve(float strength, float duration, float sign)
@@ -306,8 +325,32 @@ namespace KeepBallMoving
             transform.position = position;
             body.bodyType = RigidbodyType2D.Dynamic;
             lastFreeDirection = direction;
-            body.velocity = direction * Mathf.Clamp(speed, minSpeed, maxSpeed);
+            body.velocity = direction * GetKickedSpeed(speed);
             body.angularVelocity = 0f;
+            UpdateFastRotateSpeed(body.velocity.magnitude);
+        }
+
+        private float GetKickedSpeed(float requestedSpeed)
+        {
+            return Mathf.Clamp(requestedSpeed * Mathf.Max(0.01f, releaseKickSpeedMultiplier), minSpeed, maxSpeed);
+        }
+
+        private void UpdateFastRotateSpeed(float speed)
+        {
+            if (rotateBehaviours == null || rotateBehaviours.Length == 0)
+            {
+                return;
+            }
+
+            float speedRatio = Mathf.Max(1f, speed / Mathf.Max(0.001f, minSpeed));
+            float rotateSpeed = baseFastRotateSpeed * speedRatio;
+            for (int i = 0; i < rotateBehaviours.Length; i++)
+            {
+                if (rotateBehaviours[i] != null)
+                {
+                    rotateBehaviours[i].fastRotateSpeed = rotateSpeed;
+                }
+            }
         }
 
         private void ClearHolderAnimation()

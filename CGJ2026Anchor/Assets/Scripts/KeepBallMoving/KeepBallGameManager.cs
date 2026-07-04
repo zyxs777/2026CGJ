@@ -14,6 +14,9 @@ namespace KeepBallMoving
         [SerializeField] private KeyCode redPhantomKey = KeyCode.RightShift;
         [SerializeField] private KeyCode redAlternatePhantomKey = KeyCode.Slash;
 
+        [Header("Match Rules")]
+        [SerializeField] private int scoreToWin = 10;
+
         [Header("Field")]
         [SerializeField] private float fieldWidth = 30f;
         [SerializeField] private float fieldHeight = 17f;
@@ -41,6 +44,8 @@ namespace KeepBallMoving
         [SerializeField] private BallController phantomBallPrefab;
         [SerializeField] private GameObject blueShockwavePrefab;
         [SerializeField] private GameObject redShockwavePrefab;
+        [SerializeField] private GameObject blueHoldRangePrefab;
+        [SerializeField] private GameObject redHoldRangePrefab;
         [SerializeField] private KeepBallTalentBadge talentBadgePrefab;
         [SerializeField] private GameObject goalEffectPrefab;
 
@@ -63,6 +68,11 @@ namespace KeepBallMoving
         [SerializeField] private float sameTeamSeparationStrength = 1.1f;
         [SerializeField] private float opponentSeparationRadius = 1.1f;
         [SerializeField] private float opponentSeparationStrength = 1.35f;
+        [SerializeField] private float ballFacingRadius = 4.5f;
+        [SerializeField] private int pressurePlayerCount = 2;
+        [SerializeField] private int defenderPressurePlayerCount = 1;
+        [SerializeField] private float pressureSideOffset = 0.7f;
+        [SerializeField] private float defenderPressureBackOffset = 1.1f;
         [SerializeField] private float redKickoffAutoHoldLockout = 1.2f;
         [SerializeField] private float redAutoHoldDelay = 0.55f;
         [SerializeField] private float redPassSpeed = 11.5f;
@@ -139,6 +149,8 @@ namespace KeepBallMoving
         private float defaultFixedDeltaTime;
         private float chargeTime;
         private bool goalLocked;
+        private bool victoryOpen;
+        private Team winningTeam = Team.Blue;
         private int blueScore;
         private int redScore;
         private string stateText = "空格/A 抓球";
@@ -186,6 +198,8 @@ namespace KeepBallMoving
         private const string DefaultPhantomBallPrefabPath = "KeepBallMoving/KeepBallPhantomBall";
         private const string DefaultBlueShockwavePrefabPath = "KeepBallMoving/waveEffectblue";
         private const string DefaultRedShockwavePrefabPath = "KeepBallMoving/waveEffectred";
+        private const string DefaultBlueHoldRangePrefabPath = "KeepBallMoving/HoldRangeBlue";
+        private const string DefaultRedHoldRangePrefabPath = "KeepBallMoving/HoldRangeRed";
         private const string DefaultTalentBadgePrefabPath = "KeepBallMoving/KeepBallTalentBadge";
         private const string DefaultGoalEffectPrefabPath = "KeepBallMoving/GoalEffect";
         private const string DefaultFieldVisualPrefabPath = "KeepBallMoving/KeepBallField";
@@ -250,6 +264,12 @@ namespace KeepBallMoving
                 return;
             }
 
+            if (victoryOpen)
+            {
+                HandleVictoryInput();
+                return;
+            }
+
             if (goalLocked)
             {
                 return;
@@ -257,6 +277,7 @@ namespace KeepBallMoving
 
             UpdatePlayerMovement(Time.deltaTime);
             UpdatePhantomBallInterceptions();
+            UpdateBallFacingOverrides();
 
             if (Input.GetKeyDown(KeyCode.R))
             {
@@ -284,6 +305,7 @@ namespace KeepBallMoving
             if (ball.State == BallState.Held)
             {
                 ball.TickHold(Time.deltaTime);
+                UpdateBallFacingOverrides();
 
                 if (activePhantomPlayer != null && ball.Holder == activePhantomPlayer)
                 {
@@ -722,6 +744,16 @@ namespace KeepBallMoving
                 redShockwavePrefab = Resources.Load<GameObject>(DefaultRedShockwavePrefabPath);
             }
 
+            if (blueHoldRangePrefab == null)
+            {
+                blueHoldRangePrefab = Resources.Load<GameObject>(DefaultBlueHoldRangePrefabPath);
+            }
+
+            if (redHoldRangePrefab == null)
+            {
+                redHoldRangePrefab = Resources.Load<GameObject>(DefaultRedHoldRangePrefabPath);
+            }
+
             if (talentBadgePrefab == null)
             {
                 talentBadgePrefab = Resources.Load<KeepBallTalentBadge>(DefaultTalentBadgePrefabPath);
@@ -1042,6 +1074,7 @@ namespace KeepBallMoving
                 position,
                 team == Team.Blue ? bluePlayerSprite : redPlayerSprite,
                 controlRangeSprite,
+                team == Team.Blue ? blueHoldRangePrefab : redHoldRangePrefab,
                 holdPointSprite,
                 playerRadius,
                 catchRadius,
@@ -1203,6 +1236,8 @@ namespace KeepBallMoving
             redScore = 0;
             nextKickoffTeam = Team.Blue;
             talentSelectionOpen = false;
+            victoryOpen = false;
+            winningTeam = Team.Blue;
             lastBlueTalentText = "暂无";
             lastRedTalentText = "暂无";
             ClearExtraPlayers();
@@ -1223,6 +1258,7 @@ namespace KeepBallMoving
             RestoreGoalPresentationState();
             goalLocked = false;
             talentSelectionOpen = false;
+            victoryOpen = false;
             talentSecondPickPending = false;
             selectedTalentIndex = 0;
             nextTalentMoveInputTime = 0f;
@@ -1392,6 +1428,7 @@ namespace KeepBallMoving
                 spawnPosition,
                 team == Team.Blue ? bluePlayerSprite : redPlayerSprite,
                 controlRangeSprite,
+                team == Team.Blue ? blueHoldRangePrefab : redHoldRangePrefab,
                 holdPointSprite,
                 playerRadius * 0.82f,
                 catchRadius,
@@ -1650,14 +1687,18 @@ namespace KeepBallMoving
 
         private float GetEffectiveCatchRadius(PlayerAgent player)
         {
-            float multiplier = 1f;
-            int bigfootCount = GetTalentCount(player.Team, TalentId.BigfootForward);
-            if (player.Role == PlayerRole.Forward && bigfootCount > 0)
+            return player.CatchRadius * GetBigfootForwardMultiplier(player);
+        }
+
+        private float GetBigfootForwardMultiplier(PlayerAgent player)
+        {
+            if (player == null || player.Role != PlayerRole.Forward)
             {
-                multiplier += bigfootForwardCatchBonusPerStack * bigfootCount;
+                return 1f;
             }
 
-            return player.CatchRadius * multiplier;
+            int bigfootCount = GetTalentCount(player.Team, TalentId.BigfootForward);
+            return 1f + bigfootForwardCatchBonusPerStack * Mathf.Max(0, bigfootCount);
         }
 
         private float GetRedDimensionSkill(float skill)
@@ -1731,6 +1772,42 @@ namespace KeepBallMoving
             }
         }
 
+        private void UpdateBallFacingOverrides()
+        {
+            UpdateBallFacingOverrides(bluePlayers);
+            UpdateBallFacingOverrides(redPlayers);
+
+            if (activePhantomPlayer != null)
+            {
+                UpdateBallFacingOverride(activePhantomPlayer);
+            }
+        }
+
+        private void UpdateBallFacingOverrides(List<PlayerAgent> players)
+        {
+            foreach (PlayerAgent player in players)
+            {
+                UpdateBallFacingOverride(player);
+            }
+        }
+
+        private void UpdateBallFacingOverride(PlayerAgent player)
+        {
+            if (player == null || ball == null || ball.Holder == player)
+            {
+                if (player != null)
+                {
+                    player.SetFacingOverride(Vector2.zero, false);
+                }
+
+                return;
+            }
+
+            float safeRadius = Mathf.Max(0f, ballFacingRadius);
+            bool shouldFaceBall = safeRadius > 0f && Vector2.SqrMagnitude(player.Position - ball.Position) <= safeRadius * safeRadius;
+            player.SetFacingOverride(ball.Position, shouldFaceBall);
+        }
+
         private void UpdateHoldPointRotation(float deltaTime)
         {
             foreach (PlayerAgent player in bluePlayers)
@@ -1794,39 +1871,58 @@ namespace KeepBallMoving
             for (int i = 0; i < bluePlayers.Count; i++)
             {
                 PlayerAgent player = bluePlayers[i];
-                Vector2 target = GetBlueSupportTarget(player, i);
+                Vector2 target = GetTeamPressureTarget(player, i, Team.Blue);
                 MovePlayer(player, target, Team.Blue, blueMoveSpeed, deltaTime);
             }
 
             for (int i = 0; i < redPlayers.Count; i++)
             {
                 PlayerAgent player = redPlayers[i];
-                Vector2 target = GetRedPressureTarget(player, i);
+                Vector2 target = GetTeamPressureTarget(player, i, Team.Red);
                 float moveSpeed = IsPvpMode() ? redMoveSpeed : redMoveSpeed * Mathf.Lerp(0.65f, 1f, GetRedDimensionSkill(redMovementSkill));
                 MovePlayer(player, target, Team.Red, moveSpeed, deltaTime);
             }
         }
 
-        private Vector2 GetBlueSupportTarget(PlayerAgent player, int index)
-        {
-            return GetRoleTarget(player, index, Team.Blue);
-        }
-
-        private Vector2 GetRedPressureTarget(PlayerAgent player, int index)
+        private Vector2 GetTeamPressureTarget(PlayerAgent player, int index, Team team)
         {
             PlayerAgent holder = ball.Holder;
 
-            if (ball.State == BallState.Held && holder != null && holder.Team == Team.Blue)
+            if (ball.State == BallState.Held && holder != null && holder.Team != team)
             {
-                int holderRank = GetDistanceRank(player, redPlayers, holder.Position);
-                if (holderRank < 2)
+                List<PlayerAgent> players = team == Team.Blue ? bluePlayers : redPlayers;
+                int holderRank = GetDistanceRank(player, players, holder.Position);
+                if (holderRank < Mathf.Max(0, pressurePlayerCount))
                 {
-                    Vector2 sideOffset = new Vector2(0f, holderRank == 0 ? -0.7f : 0.7f);
+                    Vector2 sideOffset = new Vector2(0f, GetPressureLaneOffset(holderRank));
                     return ClampInsideField(holder.Position + sideOffset);
+                }
+
+                if (player.Role == PlayerRole.Defender)
+                {
+                    int defenderRank = GetRoleDistanceRank(player, players, PlayerRole.Defender, holder.Position);
+                    if (defenderRank < Mathf.Max(0, defenderPressurePlayerCount))
+                    {
+                        float ownSide = team == Team.Blue ? -1f : 1f;
+                        Vector2 defenderOffset = new Vector2(ownSide * defenderPressureBackOffset, GetPressureLaneOffset(defenderRank));
+                        return ClampInsideField(holder.Position + defenderOffset);
+                    }
                 }
             }
 
-            return GetRoleTarget(player, index, Team.Red);
+            return GetRoleTarget(player, index, team);
+        }
+
+        private float GetPressureLaneOffset(int rank)
+        {
+            if (rank <= 0)
+            {
+                return 0f;
+            }
+
+            int lane = (rank + 1) / 2;
+            float side = rank % 2 == 1 ? -1f : 1f;
+            return side * pressureSideOffset * lane;
         }
 
         private Vector2 GetRoleTarget(PlayerAgent player, int index, Team team)
@@ -2055,6 +2151,22 @@ namespace KeepBallMoving
             return rank;
         }
 
+        private int GetRoleDistanceRank(PlayerAgent player, List<PlayerAgent> players, PlayerRole role, Vector2 target)
+        {
+            int rank = 0;
+            float distance = Vector2.SqrMagnitude(player.Position - target);
+
+            foreach (PlayerAgent other in players)
+            {
+                if (other != player && other.Role == role && Vector2.SqrMagnitude(other.Position - target) < distance)
+                {
+                    rank++;
+                }
+            }
+
+            return rank;
+        }
+
         private Vector2 ClampInsideField(Vector2 position)
         {
             float margin = playerRadius + 0.25f;
@@ -2089,10 +2201,12 @@ namespace KeepBallMoving
 
             string goalMessage;
             Color goalColor;
+            Team scoringTeam;
 
             if (side == GoalSide.Right)
             {
                 blueScore++;
+                scoringTeam = Team.Blue;
                 nextKickoffTeam = Team.Red;
                 talentFirstPickTeam = Team.Blue;
                 talentSecondPickTeam = Team.Red;
@@ -2102,6 +2216,7 @@ namespace KeepBallMoving
             else
             {
                 redScore++;
+                scoringTeam = Team.Red;
                 nextKickoffTeam = Team.Blue;
                 talentFirstPickTeam = Team.Red;
                 talentSecondPickTeam = Team.Blue;
@@ -2117,7 +2232,13 @@ namespace KeepBallMoving
             DestroyActivePhantomPlayer();
 
             SpawnGoalEffect(goalFocusPosition);
-            StartCoroutine(PlayGoalSequence(goalFocusPosition, goalMessage, goalColor));
+            StartCoroutine(PlayGoalSequence(goalFocusPosition, goalMessage, goalColor, HasTeamWon(scoringTeam), scoringTeam));
+        }
+
+        private bool HasTeamWon(Team team)
+        {
+            int targetScore = Mathf.Max(1, scoreToWin);
+            return team == Team.Blue ? blueScore >= targetScore : redScore >= targetScore;
         }
 
         private Vector2 GetGoalFocusFallback(GoalSide side)
@@ -2175,7 +2296,7 @@ namespace KeepBallMoving
             }
         }
 
-        private IEnumerator PlayGoalSequence(Vector2 focusPosition, string goalMessage, Color goalColor)
+        private IEnumerator PlayGoalSequence(Vector2 focusPosition, string goalMessage, Color goalColor, bool matchWon, Team winner)
         {
             Camera cameraToAnimate = gameplayCamera != null ? gameplayCamera : Camera.main;
             Vector3 startPosition = cameraToAnimate != null ? cameraToAnimate.transform.position : defaultCameraPosition;
@@ -2205,6 +2326,12 @@ namespace KeepBallMoving
             }
 
             goalBannerText = string.Empty;
+            if (matchWon)
+            {
+                ShowVictory(winner);
+                yield break;
+            }
+
             ShowTalentSelectionAfterGoalPresentation();
         }
 
@@ -2246,6 +2373,37 @@ namespace KeepBallMoving
         {
             Time.timeScale = 1f;
             Time.fixedDeltaTime = defaultFixedDeltaTime > 0f ? defaultFixedDeltaTime : 0.02f;
+        }
+
+        private void ShowVictory(Team winner)
+        {
+            winningTeam = winner;
+            victoryOpen = true;
+            goalLocked = false;
+            talentSelectionOpen = false;
+            talentSecondPickPending = false;
+            selectedTalentIndex = 0;
+            RestoreGoalTimeScale();
+            stateText = $"{GetTeamLabel(winningTeam)}胜利";
+            ShowMessage($"{GetTeamLabel(winningTeam)}率先达到 {Mathf.Max(1, scoreToWin)} 球，比赛结束");
+        }
+
+        private void HandleVictoryInput()
+        {
+            if (Input.GetKeyDown(KeyCode.Return) ||
+                Input.GetKeyDown(KeyCode.KeypadEnter) ||
+                Input.GetKeyDown(KeyCode.Space) ||
+                IsPrimaryActionDown(Team.Blue) ||
+                IsPrimaryActionDown(Team.Red))
+            {
+                ConfirmVictoryRestart();
+            }
+        }
+
+        private void ConfirmVictoryRestart()
+        {
+            victoryOpen = false;
+            RestartMatch();
         }
 
         private void ShowTalentSelectionAfterGoalPresentation()
@@ -2330,7 +2488,7 @@ namespace KeepBallMoving
                     {
                         Id = id,
                         Name = "大脚怪前锋",
-                        Description = "前锋接球范围每层提高 10%，最多 3 层。",
+                        Description = "前锋接球范围和身体范围每层提高 10%，最多 3 层，并同步更新范围指示器。",
                         AccentColor = new Color(1f, 0.6f, 0.18f, 1f)
                     };
                 case TalentId.ExtraForward:
@@ -2824,7 +2982,9 @@ namespace KeepBallMoving
                 return;
             }
 
-            player.SetControlRangeMultiplier(GetEffectiveCatchRadius(player) / Mathf.Max(0.001f, player.CatchRadius));
+            float multiplier = GetBigfootForwardMultiplier(player);
+            player.SetControlRangeMultiplier(multiplier);
+            player.SetBodyRadiusMultiplier(multiplier);
         }
 
         private string GetTalentSummary(Team team)
@@ -3014,6 +3174,11 @@ namespace KeepBallMoving
             {
                 DrawInputDebug();
             }
+
+            if (victoryOpen)
+            {
+                DrawVictoryUi();
+            }
         }
 
         private void DrawInputDebug()
@@ -3057,6 +3222,60 @@ namespace KeepBallMoving
             GUI.Label(bannerRect, goalBannerText, bannerStyle);
         }
 
+        private void DrawVictoryUi()
+        {
+            DrawFilledRect(new Rect(0f, 0f, Screen.width, Screen.height), new Color(0.02f, 0.025f, 0.03f, 0.66f));
+
+            float width = Mathf.Min(560f, Screen.width - 48f);
+            float height = 330f;
+            Rect panelRect = new Rect((Screen.width - width) * 0.5f, (Screen.height - height) * 0.5f, width, height);
+            Color winnerColor = winningTeam == Team.Blue ? new Color(0.35f, 0.62f, 1f, 1f) : new Color(1f, 0.32f, 0.28f, 1f);
+            DrawFilledRect(panelRect, new Color(0.04f, 0.05f, 0.07f, 0.94f));
+            DrawBorder(panelRect, winnerColor, 5f);
+
+            GUIStyle titleStyle = new GUIStyle(GUI.skin.label)
+            {
+                alignment = TextAnchor.MiddleCenter,
+                fontSize = 42,
+                fontStyle = FontStyle.Bold,
+                normal = { textColor = winnerColor }
+            };
+            GUI.Label(new Rect(panelRect.x + 24f, panelRect.y + 34f, panelRect.width - 48f, 58f), $"{GetTeamLabel(winningTeam)}胜利！", titleStyle);
+
+            GUIStyle scoreStyle = new GUIStyle(GUI.skin.label)
+            {
+                alignment = TextAnchor.MiddleCenter,
+                fontSize = 24,
+                fontStyle = FontStyle.Bold,
+                normal = { textColor = Color.white }
+            };
+            GUI.Label(new Rect(panelRect.x + 24f, panelRect.y + 110f, panelRect.width - 48f, 38f), $"最终比分  蓝方 {blueScore}  -  {redScore} 红方", scoreStyle);
+
+            GUIStyle infoStyle = new GUIStyle(GUI.skin.label)
+            {
+                alignment = TextAnchor.MiddleCenter,
+                fontSize = 17,
+                normal = { textColor = new Color(0.82f, 0.86f, 0.92f, 1f) },
+                wordWrap = true
+            };
+            GUI.Label(new Rect(panelRect.x + 52f, panelRect.y + 162f, panelRect.width - 104f, 48f), $"规则：率先达到 {Mathf.Max(1, scoreToWin)} 球的一方获胜。确认后会清空比分和天赋并重新开局。", infoStyle);
+
+            GUIStyle buttonStyle = new GUIStyle(GUI.skin.button)
+            {
+                alignment = TextAnchor.MiddleCenter,
+                fontSize = 24,
+                fontStyle = FontStyle.Bold,
+                normal = { textColor = Color.white },
+                hover = { textColor = Color.white },
+                active = { textColor = Color.white }
+            };
+            Rect buttonRect = new Rect(panelRect.x + (panelRect.width - 260f) * 0.5f, panelRect.yMax - 82f, 260f, 54f);
+            if (GUI.Button(buttonRect, "确认重新开始", buttonStyle))
+            {
+                ConfirmVictoryRestart();
+            }
+        }
+
         private void DrawScoreboard()
         {
             GUIStyle scoreStyle = new GUIStyle(GUI.skin.box)
@@ -3069,7 +3288,7 @@ namespace KeepBallMoving
             float width = 520f;
             float height = 58f;
             Rect rect = new Rect((Screen.width - width) * 0.5f, 14f, width, height);
-            string text = $"蓝方 {blueScore}  -  {redScore} 红方\n模式：{GetMatchModeLabel()} / 下一轮：{GetTeamLabel(nextKickoffTeam)}开球";
+            string text = $"蓝方 {blueScore}  -  {redScore} 红方\n目标：先到 {Mathf.Max(1, scoreToWin)} 球 / 模式：{GetMatchModeLabel()} / 下一轮：{GetTeamLabel(nextKickoffTeam)}开球";
             GUI.Box(rect, text, scoreStyle);
         }
 

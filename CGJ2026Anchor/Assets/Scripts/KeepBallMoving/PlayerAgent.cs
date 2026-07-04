@@ -18,6 +18,8 @@ namespace KeepBallMoving
         private SpriteRenderer spriteRenderer;
         private CircleCollider2D bodyCollider;
         private SpriteRenderer controlRangeRenderer;
+        private Transform controlRangeTransform;
+        private Vector3 controlRangeBaseLocalScale = Vector3.one;
         private Transform holdPointPivot;
         private Transform holdPointTransform;
         private SpriteRenderer holdPointRenderer;
@@ -30,10 +32,13 @@ namespace KeepBallMoving
         private float holdPointRadius;
         private float holdPointAngle;
         private float controlRangeMultiplier = 1f;
+        private float bodyRadiusMultiplier = 1f;
         private Coroutine knockbackRoutine;
         private bool animatorHasRun;
         private bool animatorHasHold;
         private bool isHoldingAnimation;
+        private bool hasFacingOverride;
+        private Vector2 facingOverrideTarget;
 
         private static readonly int RunAnimatorHash = Animator.StringToHash("run");
         private static readonly int HoldAnimatorHash = Animator.StringToHash("hold");
@@ -45,12 +50,12 @@ namespace KeepBallMoving
         public Team Team => team;
         public PlayerRole Role => role;
         public float CatchRadius => catchRadius;
-        public float BodyRadius => bodyRadius;
+        public float BodyRadius => GetEffectiveBodyRadius();
         public Vector2 Position => transform.position;
         public Vector2 HoldPointPosition => holdPointTransform != null ? holdPointTransform.position : transform.position;
         public bool IsKnockbackActive => knockbackRoutine != null;
 
-        public void Initialize(Team playerTeam, PlayerRole playerRole, int index, Vector2 startPosition, Sprite sprite, Sprite controlRangeSprite, Sprite holdPointSprite, float radius, float catchRange, float pointRadius)
+        public void Initialize(Team playerTeam, PlayerRole playerRole, int index, Vector2 startPosition, Sprite sprite, Sprite controlRangeSprite, GameObject controlRangePrefab, Sprite holdPointSprite, float radius, float catchRange, float pointRadius)
         {
             team = playerTeam;
             role = playerRole;
@@ -96,7 +101,7 @@ namespace KeepBallMoving
             bodyCollider.isTrigger = true;
             bodyCollider.radius = 0.5f;
 
-            CreateControlRangeVisual(controlRangeSprite, baseColor);
+            CreateControlRangeVisual(controlRangeSprite, controlRangePrefab, baseColor);
             CreateHoldPointVisual(holdPointSprite, baseColor);
             CacheTargetIndicator();
             CacheAnimator();
@@ -106,6 +111,14 @@ namespace KeepBallMoving
         public void SetControlRangeMultiplier(float multiplier)
         {
             controlRangeMultiplier = Mathf.Max(0.01f, multiplier);
+            UpdateControlRangeScale();
+            UpdateHoldPointLayout();
+        }
+
+        public void SetBodyRadiusMultiplier(float multiplier)
+        {
+            bodyRadiusMultiplier = Mathf.Max(0.01f, multiplier);
+            UpdateBodyScale();
             UpdateControlRangeScale();
             UpdateHoldPointLayout();
         }
@@ -122,7 +135,7 @@ namespace KeepBallMoving
 
         public bool IsBallInControlRange(BallController ball)
         {
-            return Vector2.Distance(Position, ball.Position) <= catchRadius + ball.Radius;
+            return Vector2.Distance(Position, ball.Position) <= catchRadius * controlRangeMultiplier + ball.Radius;
         }
 
         public bool IsHoldPointTouchingBall(BallController ball)
@@ -163,6 +176,11 @@ namespace KeepBallMoving
         public void SetHoldingAnimation(bool holding)
         {
             isHoldingAnimation = holding;
+            if (holding)
+            {
+                SetFacingOverride(Vector2.zero, false);
+            }
+
             SetCatchHighlighted(holding);
             SetTargetIndicatorVisible(holding);
             SetAnimatorBool(HoldAnimatorHash, animatorHasHold, holding);
@@ -170,6 +188,12 @@ namespace KeepBallMoving
             {
                 SetAnimatorBool(RunAnimatorHash, animatorHasRun, false);
             }
+        }
+
+        public void SetFacingOverride(Vector2 targetPosition, bool enabled)
+        {
+            hasFacingOverride = enabled;
+            facingOverrideTarget = targetPosition;
         }
 
         public void OverrideVisualColors(Color color, Color catchHighlightColor)
@@ -212,7 +236,7 @@ namespace KeepBallMoving
 
             spriteRenderer.color = highlighted ? highlightColor : baseColor;
             spriteRenderer.sortingOrder = highlighted ? HoldingSortingOrder : NormalSortingOrder;
-            transform.localScale = Vector3.one * (bodyRadius * 2f * (highlighted ? 1.12f : 1f));
+            UpdateBodyScale();
             UpdateControlRangeScale();
             UpdateHoldPointLayout();
 
@@ -238,6 +262,7 @@ namespace KeepBallMoving
             spawnPosition = position;
             transform.position = spawnPosition;
             lastAnimationPosition = spawnPosition;
+            SetFacingOverride(Vector2.zero, false);
             SetHoldingAnimation(false);
             SetCatchHighlighted(false);
         }
@@ -248,7 +273,7 @@ namespace KeepBallMoving
 
             Vector2 currentPosition = transform.position;
             Vector2 movement = currentPosition - lastAnimationPosition;
-            UpdateSpriteFacing(movement);
+            UpdateSpriteFacing(hasFacingOverride ? facingOverrideTarget - currentPosition : movement);
 
             bool isRunning = !isHoldingAnimation && movement.sqrMagnitude > RunAnimationMoveThreshold * RunAnimationMoveThreshold;
             SetAnimatorBool(RunAnimatorHash, animatorHasRun, isRunning);
@@ -379,17 +404,35 @@ namespace KeepBallMoving
             animator.SetBool(parameterHash, value);
         }
 
-        private void CreateControlRangeVisual(Sprite controlRangeSprite, Color color)
+        private void CreateControlRangeVisual(Sprite controlRangeSprite, GameObject controlRangePrefab, Color color)
         {
-            GameObject rangeObject = new GameObject("ControlRange");
-            rangeObject.transform.SetParent(transform);
-            rangeObject.transform.localPosition = Vector3.zero;
-            rangeObject.transform.localRotation = Quaternion.identity;
+            GameObject rangeObject;
+            if (controlRangePrefab != null)
+            {
+                rangeObject = Instantiate(controlRangePrefab, transform);
+                rangeObject.name = "ControlRange";
+                rangeObject.transform.localPosition = Vector3.zero;
+                rangeObject.transform.localRotation = Quaternion.identity;
+            }
+            else
+            {
+                rangeObject = new GameObject("ControlRange");
+                rangeObject.transform.SetParent(transform);
+                rangeObject.transform.localPosition = Vector3.zero;
+                rangeObject.transform.localRotation = Quaternion.identity;
 
-            controlRangeRenderer = rangeObject.AddComponent<SpriteRenderer>();
-            controlRangeRenderer.sprite = controlRangeSprite;
-            controlRangeRenderer.color = new Color(color.r, color.g, color.b, 0.18f);
-            controlRangeRenderer.sortingOrder = 10;
+                controlRangeRenderer = rangeObject.AddComponent<SpriteRenderer>();
+                controlRangeRenderer.sprite = controlRangeSprite;
+                controlRangeRenderer.color = new Color(color.r, color.g, color.b, 0.18f);
+                controlRangeRenderer.sortingOrder = 10;
+            }
+
+            controlRangeTransform = rangeObject.transform;
+            controlRangeBaseLocalScale = controlRangeTransform.localScale;
+            if (controlRangeRenderer == null)
+            {
+                controlRangeRenderer = rangeObject.GetComponentInChildren<SpriteRenderer>();
+            }
 
             UpdateControlRangeScale();
         }
@@ -418,14 +461,16 @@ namespace KeepBallMoving
 
         private void UpdateControlRangeScale()
         {
-            if (controlRangeRenderer == null)
+            if (controlRangeTransform == null)
             {
                 return;
             }
 
-            float parentScale = Mathf.Max(0.001f, transform.localScale.x);
-            float localDiameter = catchRadius * controlRangeMultiplier * 2f / parentScale;
-            controlRangeRenderer.transform.localScale = Vector3.one * localDiameter;
+            float desiredDiameter = catchRadius * controlRangeMultiplier * 2f;
+            controlRangeTransform.localScale = controlRangeBaseLocalScale;
+            float baseDiameter = GetControlRangeWorldDiameter();
+            float scale = desiredDiameter / Mathf.Max(0.001f, baseDiameter);
+            controlRangeTransform.localScale = controlRangeBaseLocalScale * scale;
         }
 
         private void UpdateHoldPointLayout()
@@ -438,6 +483,34 @@ namespace KeepBallMoving
             float parentScale = Mathf.Max(0.001f, transform.localScale.x);
             holdPointTransform.localPosition = new Vector3(catchRadius * controlRangeMultiplier / parentScale, 0f, 0f);
             holdPointTransform.localScale = Vector3.one * (holdPointRadius * 2f / parentScale);
+        }
+
+        private void UpdateBodyScale()
+        {
+            float highlightMultiplier = isHoldingAnimation ? 1.12f : 1f;
+            transform.localScale = Vector3.one * (GetEffectiveBodyRadius() * 2f * highlightMultiplier);
+        }
+
+        private float GetEffectiveBodyRadius()
+        {
+            return bodyRadius * bodyRadiusMultiplier;
+        }
+
+        private float GetControlRangeWorldDiameter()
+        {
+            SpriteRenderer[] renderers = controlRangeTransform.GetComponentsInChildren<SpriteRenderer>();
+            if (renderers.Length == 0)
+            {
+                return Mathf.Max(0.001f, transform.lossyScale.x);
+            }
+
+            Bounds bounds = renderers[0].bounds;
+            for (int i = 1; i < renderers.Length; i++)
+            {
+                bounds.Encapsulate(renderers[i].bounds);
+            }
+
+            return Mathf.Max(bounds.size.x, bounds.size.y);
         }
     }
 }

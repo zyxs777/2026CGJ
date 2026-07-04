@@ -14,6 +14,7 @@ PVE 下红方由 AI 自动接球、传球和射门
 PVP 下红方由另一名玩家控制抓球和释放
 进球后计分并进入三选一天赋
 选完天赋后由失球方开球
+率先达到 10 球的一方获胜，确认后重新开始比赛
 ```
 
 当前优先级：
@@ -126,7 +127,7 @@ Defender    后卫
 - 接球范围 `CatchRadius`。
 - 身体半径 `BodyRadius`。
 - 出生位置。
-- 控球范围圈显示。
+- 触球范围显示。默认由 `HoldRangeBlue.prefab` / `HoldRangeRed.prefab` 实例化，并按实际接球范围缩放。
 - 临时高亮。
 - 平滑击退。
 - 基础移动接口。
@@ -140,7 +141,9 @@ Defender    后卫
 - 自由球状态。
 - Held 状态。
 - 重置足球。
-- 限制最大和最小球速。
+- 踢出时有释放加速，之后逐渐衰减到最小球速。
+- 限制最大球速，并保留最小速度保护。
+- 根据当前球速同步球预制体下 `RotateAroundAxisBehaviour.fastRotateSpeed`。
 - Held 时围绕持球球员旋转。
 - 蓝方释放。
 - 红方朝目标释放。
@@ -255,7 +258,9 @@ Assets/Resources/KeepBallMoving/KeepBallField.prefab
 - 无重力。
 - 在球场内反弹。
 - 有最大速度限制。
-- 有最小速度保护，避免球太快停死。
+- 踢出时先乘 `releaseKickSpeedMultiplier`，再受 `maxSpeed` 限制。
+- 自由飞行时按 `freeBallDeceleration` 逐渐衰减到 `minSpeed`。
+- `RotateAroundAxisBehaviour.fastRotateSpeed` 会跟随当前球速变化，基础值为 `baseFastRotateSpeed`，默认 360。
 - 进入球门后触发得分。
 - 被 Hold 时切换为 Kinematic。
 - 释放后切回 Dynamic 并设置速度。
@@ -278,7 +283,7 @@ playersPerTeam = 5
 后卫
 ```
 
-球员有控制范围圈。大脚怪前锋天赋会同步更新前锋的范围圈显示。
+球员有触球范围圈。大脚怪前锋天赋会同步更新前锋的实际接球范围、范围圈显示和身体范围。
 
 球员预制体可以挂 Animator。`PlayerAgent` 会自动写入两个 bool 参数：
 
@@ -291,7 +296,7 @@ hold：持球时为 true；不持球时为 false
 
 球员预制体可以包含名为 `target` 的子节点。`PlayerAgent` 会自动查找这个子节点，真正持球时显示，不持球时隐藏。
 
-球员 Sprite 默认朝右。运行时向左移动会设置 `flipX=true`，向右移动会恢复 `flipX=false`，原地或竖向移动时保持当前朝向。
+球员 Sprite 默认朝右。运行时向左移动会设置 `flipX=true`，向右移动会恢复 `flipX=false`，原地或竖向移动时保持当前朝向。非持球队员进入 `ballFacingRadius` 范围内时，会强制朝向球；持球队员不受这个规则影响。
 
 球员颜色也在球员预制体的 `PlayerAgent` 上调：
 
@@ -411,9 +416,20 @@ PVE 模式下，红方会自动：
 
 PVP 模式下，红方 AI 自动接球和自动出球不会执行，但红方球员仍然自动跑位。
 
+双方的无球跑位和逼抢压迫共用一套逻辑。任意一方持球时，另一方最近的球员会主动压迫持球人；双方后卫还会额外前顶到持球人和自家球门之间参与逼抢。
+
 ### 4.7 比分和足球规则
 
 上方 UI 显示蓝红比分。
+
+胜利规则：
+
+```text
+默认先到 10 球的一方获胜
+胜利进球仍会播放进球慢动作、镜头放大和进球特效
+演出结束后弹出胜利 UI
+点击“确认重新开始”会清空比分、天赋和场上临时物，并从蓝方开球重新开始
+```
 
 进球规则：
 
@@ -430,7 +446,8 @@ PVP 模式下，红方 AI 自动接球和自动出球不会执行，但红方球
 - 破门位置会生成 `GoalEffect.prefab` 进球特效。
 - 镜头快速移动并放大到破门的球所在位置。
 - 屏幕中央显示“蓝方进球！”或“红方进球！”。
-- 演出结束后镜头和时间缩放恢复，再进入三选一天赋选择。
+- 演出结束后镜头和时间缩放恢复；如果未达到胜利分数，则进入三选一天赋选择。
+- 如果该进球让某一方达到胜利分数，则不再进入天赋选择，改为显示胜利 UI。
 
 每次重新发球时：
 
@@ -458,7 +475,7 @@ PVP 模式下，红方 AI 自动接球和自动出球不会执行，但红方球
 | 天赋 | 最大层数 | 当前效果 |
 |---|---:|---|
 | 幻影足球 | 3 | 每层在传球时多生成 1 颗幻影足球；多颗幻影足球平分 60 度散射角。 |
-| 大脚怪前锋 | 3 | 前锋接球范围每层提高 10%，并同步更新范围指示器。 |
+| 大脚怪前锋 | 3 | 前锋接球范围和身体范围每层提高 10%，并同步更新范围指示器。 |
 | 额外前锋 | 2 | 每层额外获得 1 个右方前锋球员。 |
 | 额外中场 | 2 | 每层额外获得 1 个右方中场球员。 |
 | 额外后卫 | 2 | 每层额外获得 1 个右方后卫球员。 |
@@ -553,6 +570,8 @@ KeepBallPlayer.prefab
 KeepBallPlayer1.prefab
 KeepBallBall.prefab
 KeepBallPhantomBall.prefab
+HoldRangeBlue.prefab
+HoldRangeRed.prefab
 waveEffectblue.prefab
 waveEffectred.prefab
 KeepBallPhantomPlayer.prefab
@@ -566,6 +585,8 @@ GoalEffect.prefab
 - `KeepBallPlayer1.prefab`：红方默认球员预制体，可用于挂不同 Animator。
 - `KeepBallBall.prefab`：普通足球预制体。
 - `KeepBallPhantomBall.prefab`：幻影足球预制体。
+- `HoldRangeBlue.prefab`：蓝方触球范围显示预制体。
+- `HoldRangeRed.prefab`：红方触球范围显示预制体。
 - `waveEffectblue.prefab`：蓝方立场冲击特效。
 - `waveEffectred.prefab`：红方立场冲击特效。
 - `KeepBallPhantomPlayer.prefab`：幻影球员预制体。
@@ -597,6 +618,16 @@ maxChargeTime
 maxBallSpeed
 ```
 
+足球预制体 `KeepBallBall.prefab` / `KeepBallPhantomBall.prefab` 的 `BallController` 上还可以调：
+
+```csharp
+releaseKickSpeedMultiplier
+freeBallDeceleration
+baseFastRotateSpeed
+```
+
+球速越高，球预制体下 `RotateAroundAxisBehaviour.fastRotateSpeed` 越大；当球速等于或低于 `minSpeed` 时，fast 转速保持 `baseFastRotateSpeed`。
+
 ### 6.2 球员移动
 
 ```csharp
@@ -610,6 +641,11 @@ sameTeamSeparationRadius
 sameTeamSeparationStrength
 opponentSeparationRadius
 opponentSeparationStrength
+ballFacingRadius
+pressurePlayerCount
+defenderPressurePlayerCount
+pressureSideOffset
+defenderPressureBackOffset
 redKickoffAutoHoldLockout
 redAutoHoldDelay
 redPassSpeed
@@ -617,6 +653,15 @@ redReleaseSpeed
 ```
 
 球员移动时会做软分离，避免站位完全重叠。同队和敌队分别使用独立的分离半径与力度；红蓝双方都会避开对方球员。完全重叠时会使用一个稳定的备用方向把球员分开。
+
+`ballFacingRadius` 控制非持球队员强制朝向球的范围。范围内会优先朝向球，范围外恢复按移动方向决定朝向。
+
+压迫参数说明：
+
+- `pressurePlayerCount`：对方持球时，最近多少名球员直接压迫持球人。
+- `defenderPressurePlayerCount`：对方持球时，额外有多少名后卫前顶参与逼抢。
+- `pressureSideOffset`：多名球员压迫时在持球人上下两侧错开的距离。
+- `defenderPressureBackOffset`：后卫逼抢时站在持球人和自家球门之间的横向偏移。
 
 ### 6.3 球员预制体视觉
 
@@ -629,7 +674,15 @@ redHighlightColor
 
 这些字段在 `PlayerAgent` 上，建议直接到 `KeepBallPlayer.prefab` 和 `KeepBallPlayer1.prefab` 中调试。
 
-### 6.4 进球演出
+### 6.4 比赛规则参数
+
+```csharp
+scoreToWin
+```
+
+`scoreToWin` 默认是 `10`，表示谁先达到 10 球谁赢。可以在 `KeepBallGameManager` 的 Inspector 中调整。
+
+### 6.5 进球演出
 
 ```csharp
 goalSlowTimeScale
@@ -640,7 +693,7 @@ goalZoomOrthographicSize
 goalEffectLifetime
 ```
 
-### 6.5 红方 AI 强度
+### 6.6 红方 AI 强度
 
 ```csharp
 redAiStrength
@@ -659,7 +712,7 @@ redMaxShotAimError
 redMaxKickSpeedRandomness
 ```
 
-### 6.6 天赋参数
+### 6.7 天赋参数
 
 ```csharp
 phantomBallSpawnOffset
@@ -690,6 +743,8 @@ ballPrefab
 phantomBallPrefab
 blueShockwavePrefab
 redShockwavePrefab
+blueHoldRangePrefab
+redHoldRangePrefab
 talentBadgePrefab
 goalEffectPrefab
 ```
