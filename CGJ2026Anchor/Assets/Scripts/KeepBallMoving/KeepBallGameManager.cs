@@ -130,6 +130,11 @@ namespace KeepBallMoving
         private float nextTalentMoveInputTime;
         private bool rightStickHorizontalMissing;
         private readonly TalentOption[] currentTalentOptions = new TalentOption[TalentChoiceCount];
+        private readonly bool[] talentOptionTaken = new bool[TalentChoiceCount];
+        private Team talentFirstPickTeam = Team.Blue;
+        private Team talentSecondPickTeam = Team.Red;
+        private Team currentTalentPickingTeam = Team.Blue;
+        private bool talentSecondPickPending;
         private string lastBlueTalentText = "暂无";
         private string lastRedTalentText = "暂无";
 
@@ -314,7 +319,7 @@ namespace KeepBallMoving
             int direction = GetTalentSelectionDirection();
             if (direction != 0 && Time.unscaledTime >= nextTalentMoveInputTime)
             {
-                selectedTalentIndex = Mathf.Clamp(selectedTalentIndex + direction, 0, TalentChoiceCount - 1);
+                selectedTalentIndex = FindNextSelectableTalentIndex(selectedTalentIndex, direction, currentTalentPickingTeam);
                 nextTalentMoveInputTime = Time.unscaledTime + 0.18f;
             }
 
@@ -354,6 +359,27 @@ namespace KeepBallMoving
 
             nextTalentMoveInputTime = 0f;
             return 0;
+        }
+
+        private int FindNextSelectableTalentIndex(int startIndex, int direction, Team team)
+        {
+            int safeDirection = direction >= 0 ? 1 : -1;
+            int index = Mathf.Clamp(startIndex, 0, TalentChoiceCount - 1);
+            for (int step = 0; step < TalentChoiceCount; step++)
+            {
+                index = Mathf.Clamp(index + safeDirection, 0, TalentChoiceCount - 1);
+                if (CanSelectTalentOption(index, team))
+                {
+                    return index;
+                }
+
+                if ((safeDirection < 0 && index == 0) || (safeDirection > 0 && index == TalentChoiceCount - 1))
+                {
+                    break;
+                }
+            }
+
+            return CanSelectTalentOption(startIndex, team) ? startIndex : FindFirstSelectableTalentIndex(team);
         }
 
         private float GetAxisRawSafe(string axisName)
@@ -890,6 +916,7 @@ namespace KeepBallMoving
         {
             goalLocked = false;
             talentSelectionOpen = false;
+            talentSecondPickPending = false;
             selectedTalentIndex = 0;
             nextTalentMoveInputTime = 0f;
             chargeTime = 0f;
@@ -1695,12 +1722,16 @@ namespace KeepBallMoving
             {
                 blueScore++;
                 nextKickoffTeam = Team.Red;
+                talentFirstPickTeam = Team.Blue;
+                talentSecondPickTeam = Team.Red;
                 ShowMessage("蓝方进球！红方开球");
             }
             else
             {
                 redScore++;
                 nextKickoffTeam = Team.Blue;
+                talentFirstPickTeam = Team.Red;
+                talentSecondPickTeam = Team.Blue;
                 ShowMessage("红方进球！蓝方开球");
             }
 
@@ -1721,15 +1752,22 @@ namespace KeepBallMoving
         private IEnumerator ShowTalentSelectionAfterGoal()
         {
             yield return new WaitForSeconds(0.8f);
+            currentTalentPickingTeam = talentFirstPickTeam;
+            talentSecondPickPending = false;
             GenerateTalentChoices();
             talentSelectionOpen = true;
-            ShowMessage("选择一个天赋");
+            ShowMessage($"{GetTeamLabel(currentTalentPickingTeam)}先选择天赋");
         }
 
         private void GenerateTalentChoices()
         {
             selectedTalentIndex = 0;
             nextTalentMoveInputTime = 0f;
+            for (int i = 0; i < talentOptionTaken.Length; i++)
+            {
+                talentOptionTaken[i] = false;
+            }
+
             TalentId[] pool =
             {
                 TalentId.PhantomFootball,
@@ -1744,7 +1782,7 @@ namespace KeepBallMoving
             List<TalentId> availablePool = new List<TalentId>();
             foreach (TalentId talentId in pool)
             {
-                if (CanGainTalent(Team.Blue, talentId))
+                if (CanGainTalent(currentTalentPickingTeam, talentId))
                 {
                     availablePool.Add(talentId);
                 }
@@ -1762,6 +1800,12 @@ namespace KeepBallMoving
                 TalentId picked = availablePool[pickIndex];
                 availablePool.RemoveAt(pickIndex);
                 currentTalentOptions[i] = CreateTalentOption(picked);
+            }
+
+            selectedTalentIndex = FindFirstSelectableTalentIndex(currentTalentPickingTeam);
+            if (selectedTalentIndex < 0)
+            {
+                selectedTalentIndex = 0;
             }
         }
 
@@ -1851,37 +1895,69 @@ namespace KeepBallMoving
                 return;
             }
 
-            TalentOption playerTalent = currentTalentOptions[index];
-            TalentOption enemyTalent = GetRandomAvailableTalentOption(Team.Red);
+            if (!CanSelectTalentOption(index, currentTalentPickingTeam))
+            {
+                selectedTalentIndex = FindFirstSelectableTalentIndex(currentTalentPickingTeam);
+                ShowMessage("这个天赋已被选择或已满");
+                return;
+            }
 
-            bool playerGained = ApplyTalent(Team.Blue, playerTalent);
-            bool enemyGained = ApplyTalent(Team.Red, enemyTalent);
+            TalentOption pickedTalent = currentTalentOptions[index];
+            bool gained = ApplyTalent(currentTalentPickingTeam, pickedTalent);
+            string gainedText = gained ? pickedTalent.Name : $"{pickedTalent.Name}已满";
+            if (currentTalentPickingTeam == Team.Blue)
+            {
+                lastBlueTalentText = gainedText;
+            }
+            else
+            {
+                lastRedTalentText = gainedText;
+            }
 
-            lastBlueTalentText = playerGained ? playerTalent.Name : $"{playerTalent.Name}已满";
-            lastRedTalentText = enemyGained ? enemyTalent.Name : $"{enemyTalent.Name}已满";
+            talentOptionTaken[index] = true;
+
+            if (!talentSecondPickPending)
+            {
+                talentSecondPickPending = true;
+                currentTalentPickingTeam = talentSecondPickTeam;
+                selectedTalentIndex = FindFirstSelectableTalentIndex(currentTalentPickingTeam);
+                if (selectedTalentIndex < 0)
+                {
+                    talentSelectionOpen = false;
+                    ShowMessage($"{GetTeamLabel(talentSecondPickTeam)}没有可选的剩余天赋");
+                    ResetRound();
+                    return;
+                }
+
+                ShowMessage($"{GetTeamLabel(talentFirstPickTeam)}获得：{pickedTalent.Name}；{GetTeamLabel(talentSecondPickTeam)}从剩余天赋中选择");
+                return;
+            }
+
             talentSelectionOpen = false;
-
+            talentSecondPickPending = false;
             ShowMessage($"蓝方获得：{lastBlueTalentText}；红方获得：{lastRedTalentText}");
             ResetRound();
         }
 
-        private TalentOption GetRandomAvailableTalentOption(Team team)
+        private bool CanSelectTalentOption(int index, Team team)
         {
-            List<TalentOption> availableOptions = new List<TalentOption>();
-            foreach (TalentOption option in currentTalentOptions)
+            return index >= 0 &&
+                index < currentTalentOptions.Length &&
+                !talentOptionTaken[index] &&
+                CanGainTalent(team, currentTalentOptions[index].Id);
+        }
+
+        private int FindFirstSelectableTalentIndex(Team team)
+        {
+            for (int i = 0; i < currentTalentOptions.Length; i++)
             {
-                if (CanGainTalent(team, option.Id))
+                if (CanSelectTalentOption(i, team))
                 {
-                    availableOptions.Add(option);
+                    return i;
                 }
             }
 
-            if (availableOptions.Count == 0)
-            {
-                return currentTalentOptions[Random.Range(0, currentTalentOptions.Length)];
-            }
-
-            return availableOptions[Random.Range(0, availableOptions.Count)];
+            return -1;
         }
 
         private bool ApplyTalent(Team team, TalentOption talent)
@@ -2335,7 +2411,10 @@ namespace KeepBallMoving
                 normal = { textColor = Color.white }
             };
 
-            GUI.Label(new Rect(0f, 76f, Screen.width, 44f), "选择新天赋！", titleStyle);
+            string titleText = talentSecondPickPending
+                ? $"{GetTeamLabel(currentTalentPickingTeam)}后选天赋"
+                : $"{GetTeamLabel(currentTalentPickingTeam)}先进球，先选天赋";
+            GUI.Label(new Rect(0f, 76f, Screen.width, 44f), titleText, titleStyle);
 
             GUIStyle infoStyle = new GUIStyle(GUI.skin.label)
             {
@@ -2344,8 +2423,11 @@ namespace KeepBallMoving
                 normal = { textColor = new Color(0.84f, 0.88f, 0.94f, 1f) }
             };
 
-            GUI.Label(new Rect(0f, 122f, Screen.width, 24f), $"选择一个立即生效的天赋；红方将随机获得一个。上次：蓝方 {lastBlueTalentText} / 红方 {lastRedTalentText}", infoStyle);
-            GUI.Label(new Rect(0f, 146f, Screen.width, 22f), "手柄：左右摇杆选择，A 确认", infoStyle);
+            string orderText = talentSecondPickPending
+                ? $"{GetTeamLabel(currentTalentPickingTeam)}只能从剩余天赋中选择。上次：蓝方 {lastBlueTalentText} / 红方 {lastRedTalentText}"
+                : $"进球方先选，失球方后选剩余天赋。上次：蓝方 {lastBlueTalentText} / 红方 {lastRedTalentText}";
+            GUI.Label(new Rect(0f, 122f, Screen.width, 24f), orderText, infoStyle);
+            GUI.Label(new Rect(0f, 146f, Screen.width, 22f), "手柄：左右摇杆选择，A 确认；鼠标点击选择", infoStyle);
 
             float cardWidth = 240f;
             float cardHeight = 380f;
@@ -2374,12 +2456,13 @@ namespace KeepBallMoving
             {
                 TalentOption option = currentTalentOptions[i];
                 Rect cardRect = new Rect(startX + i * (cardWidth + gap), cardY, cardWidth, cardHeight);
-                if (cardRect.Contains(Event.current.mousePosition))
+                bool selectable = CanSelectTalentOption(i, currentTalentPickingTeam);
+                if (selectable && cardRect.Contains(Event.current.mousePosition))
                 {
                     selectedTalentIndex = i;
                 }
 
-                DrawTalentCard(cardRect, option, cardTitleStyle, descriptionStyle, i == selectedTalentIndex);
+                DrawTalentCard(cardRect, option, cardTitleStyle, descriptionStyle, i == selectedTalentIndex, talentOptionTaken[i], selectable, currentTalentPickingTeam);
 
                 if (Event.current.type == EventType.MouseUp && cardRect.Contains(Event.current.mousePosition))
                 {
@@ -2389,14 +2472,14 @@ namespace KeepBallMoving
             }
         }
 
-        private void DrawTalentCard(Rect cardRect, TalentOption option, GUIStyle titleStyle, GUIStyle descriptionStyle, bool selected)
+        private void DrawTalentCard(Rect cardRect, TalentOption option, GUIStyle titleStyle, GUIStyle descriptionStyle, bool selected, bool taken, bool selectable, Team viewingTeam)
         {
-            Color cardColor = selected ? new Color(0.13f, 0.16f, 0.22f, 1f) : new Color(0.09f, 0.11f, 0.15f, 1f);
-            Color borderColor = selected ? option.AccentColor : new Color(0.22f, 0.27f, 0.36f, 1f);
+            Color cardColor = selected && selectable ? new Color(0.13f, 0.16f, 0.22f, 1f) : new Color(0.09f, 0.11f, 0.15f, 1f);
+            Color borderColor = selected && selectable ? option.AccentColor : new Color(0.22f, 0.27f, 0.36f, 1f);
             DrawFilledRect(cardRect, cardColor);
-            DrawBorder(cardRect, borderColor, selected ? 7f : 4f);
+            DrawBorder(cardRect, borderColor, selected && selectable ? 7f : 4f);
             DrawBorder(new Rect(cardRect.x + 6f, cardRect.y + 6f, cardRect.width - 12f, cardRect.height - 12f), new Color(0.04f, 0.05f, 0.07f, 1f), 2f);
-            if (selected)
+            if (selected && selectable)
             {
                 DrawBorder(new Rect(cardRect.x + 10f, cardRect.y + 10f, cardRect.width - 20f, cardRect.height - 20f), new Color(1f, 1f, 1f, 0.45f), 2f);
             }
@@ -2410,7 +2493,7 @@ namespace KeepBallMoving
             DrawIconPlaceholderLabel(iconRect);
 
             Rect descriptionRect = new Rect(cardRect.x + 16f, cardRect.y + 208f, cardRect.width - 32f, 122f);
-            string description = $"{option.Description}\n\n当前拥有：{GetTalentCount(Team.Blue, option.Id)} / {GetTalentMaxCount(option.Id)}";
+            string description = $"{option.Description}\n\n{GetTeamLabel(viewingTeam)}当前拥有：{GetTalentCount(viewingTeam, option.Id)} / {GetTalentMaxCount(option.Id)}";
             GUI.Label(descriptionRect, description, descriptionStyle);
 
             GUIStyle chooseStyle = new GUIStyle(GUI.skin.label)
@@ -2420,7 +2503,13 @@ namespace KeepBallMoving
                 normal = { textColor = new Color(0.78f, 0.84f, 0.95f, 1f) }
             };
 
-            GUI.Label(new Rect(cardRect.x + 16f, cardRect.yMax - 36f, cardRect.width - 32f, 22f), selected ? "A 确认 / 点击选择" : "摇杆左右切换", chooseStyle);
+            string actionText = taken ? "已被选择" : selectable ? selected ? "A 确认 / 点击选择" : "摇杆左右切换" : "已满";
+            GUI.Label(new Rect(cardRect.x + 16f, cardRect.yMax - 36f, cardRect.width - 32f, 22f), actionText, chooseStyle);
+
+            if (!selectable)
+            {
+                DrawFilledRect(cardRect, new Color(0f, 0f, 0f, 0.42f));
+            }
         }
 
         private void DrawIconPlaceholderLabel(Rect iconRect)
