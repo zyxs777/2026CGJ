@@ -13,7 +13,7 @@ GameObject:
   - component: {fileID: 11400000}
   - component: {fileID: 4357946935096827518}
   m_Layer: 0
-  m_Name: KeepBallPlayer
+  m_Name: KeepBallPlayer1
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0

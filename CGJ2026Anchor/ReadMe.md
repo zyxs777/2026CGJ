@@ -234,6 +234,21 @@ fieldWidth  = 30
 fieldHeight = 17
 ```
 
+球场背景支持替换为 Sprite 贴图：
+
+```text
+Assets/Resources/KeepBallMoving/KeepBallField.prefab
+```
+
+`KeepBallGameManager` 是运行时由 `KeepBallBootstrapper` 创建的，不需要提前挂在场景或预制体上。球场视觉改为预制体方式：
+
+- 运行时会优先加载 `Assets/Resources/KeepBallMoving/KeepBallField.prefab`。
+- prefab 里默认有一个 `Grass` 子物体，挂 `SpriteRenderer`。
+- 提前打开这个 prefab，就可以直接配置 `Grass` 的 Sprite、Color、Transform、Sorting Order 等。
+- 默认 `Grass` 使用 `Assets/Resources/KeepBallMoving/BG2.png`。
+
+如果 `KeepBallField.prefab` 不存在，代码才会回退到旧的运行时 Grass 生成逻辑。中线、中圈、禁区线、墙体碰撞和球门逻辑仍由代码生成并叠在球场预制体上方。
+
 ### 4.2 足球物理
 
 足球使用 `Rigidbody2D`。
@@ -267,6 +282,28 @@ playersPerTeam = 5
 ```
 
 球员有控制范围圈。大脚怪前锋天赋会同步更新前锋的范围圈显示。
+
+球员预制体可以挂 Animator。`PlayerAgent` 会自动写入两个 bool 参数：
+
+```text
+run：不持球且位置发生移动时为 true；不持球且停止时为 false
+hold：持球时为 true；不持球时为 false
+```
+
+如果预制体没有 Animator，或 Animator 没有对应参数，代码会静默跳过。
+
+球员 Sprite 默认朝右。运行时向左移动会设置 `flipX=true`，向右移动会恢复 `flipX=false`，原地或竖向移动时保持当前朝向。
+
+球员颜色也在球员预制体的 `PlayerAgent` 上调：
+
+```text
+blueColor / redColor：普通颜色
+blueHighlightColor / redHighlightColor：真正持球时的高亮颜色
+```
+
+只有真正持球的球员会使用高亮颜色和放大效果；仅仅进入可接球范围不会高亮。持球球员 Sprite 的 `sortingOrder` 会设为 100，其他球员为 30。
+
+蓝方默认使用 `KeepBallPlayer.prefab`，红方默认使用 `KeepBallPlayer1.prefab`，所以两队可以分别保存不同颜色和动画。
 
 ### 4.4 PVE / PVP 模式
 
@@ -506,6 +543,7 @@ Assets/Resources/KeepBallMoving/
 
 ```text
 KeepBallPlayer.prefab
+KeepBallPlayer1.prefab
 KeepBallBall.prefab
 KeepBallPhantomBall.prefab
 KeepBallBlueShockwave.prefab
@@ -517,7 +555,8 @@ GoalEffect.prefab
 
 用途：
 
-- `KeepBallPlayer.prefab`：默认球员预制体。
+- `KeepBallPlayer.prefab`：蓝方默认球员预制体。
+- `KeepBallPlayer1.prefab`：红方默认球员预制体，可用于挂不同 Animator。
 - `KeepBallBall.prefab`：普通足球预制体。
 - `KeepBallPhantomBall.prefab`：幻影足球预制体。
 - `KeepBallBlueShockwave.prefab`：蓝方立场特效。
@@ -568,7 +607,18 @@ redPassSpeed
 redReleaseSpeed
 ```
 
-### 6.3 进球演出
+### 6.3 球员预制体视觉
+
+```csharp
+blueColor
+redColor
+blueHighlightColor
+redHighlightColor
+```
+
+这些字段在 `PlayerAgent` 上，建议直接到 `KeepBallPlayer.prefab` 和 `KeepBallPlayer1.prefab` 中调试。
+
+### 6.4 进球演出
 
 ```csharp
 goalSlowTimeScale
@@ -579,7 +629,7 @@ goalZoomOrthographicSize
 goalEffectLifetime
 ```
 
-### 6.4 红方 AI 强度
+### 6.5 红方 AI 强度
 
 ```csharp
 redAiStrength
@@ -598,7 +648,7 @@ redMaxShotAimError
 redMaxKickSpeedRandomness
 ```
 
-### 6.5 天赋参数
+### 6.6 天赋参数
 
 ```csharp
 phantomBallSpawnOffset
@@ -617,7 +667,7 @@ phantomPlayerHoldAngularSpeed
 phantomPlayerColor
 ```
 
-### 6.6 预制体字段
+### 6.7 预制体字段
 
 ```csharp
 bluePlayerPrefab

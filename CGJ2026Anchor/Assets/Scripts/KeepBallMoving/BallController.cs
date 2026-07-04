@@ -107,6 +107,7 @@ namespace KeepBallMoving
         public void ResetBall(Vector2 position, Vector2 velocity)
         {
             State = BallState.Free;
+            ClearHolderAnimation();
             holder = null;
             IsPhantom = false;
             phantomBounceCount = 0;
@@ -130,7 +131,13 @@ namespace KeepBallMoving
 
         public void BeginHold(PlayerAgent newHolder, float minHoldRadius, float angularSpeed)
         {
+            if (holder != null && holder != newHolder)
+            {
+                holder.SetHoldingAnimation(false);
+            }
+
             holder = newHolder;
+            holder.SetHoldingAnimation(true);
             Vector2 offset = Position - holder.Position;
             if (offset.sqrMagnitude < 0.001f)
             {
@@ -240,6 +247,7 @@ namespace KeepBallMoving
         public void LaunchPhantom(Vector2 position, Vector2 direction, float speed)
         {
             State = BallState.Free;
+            ClearHolderAnimation();
             holder = null;
             transform.position = position;
 
@@ -257,6 +265,7 @@ namespace KeepBallMoving
         public void FreezeForGoalPresentation(Vector2 position)
         {
             State = BallState.Free;
+            ClearHolderAnimation();
             holder = null;
             curveRemainingTime = 0f;
             transform.position = position;
@@ -291,6 +300,7 @@ namespace KeepBallMoving
         private void ReleaseInDirectionAt(Vector2 position, Vector2 direction, float speed)
         {
             State = BallState.Free;
+            ClearHolderAnimation();
             holder = null;
             body.position = position;
             transform.position = position;
@@ -298,6 +308,14 @@ namespace KeepBallMoving
             lastFreeDirection = direction;
             body.velocity = direction * Mathf.Clamp(speed, minSpeed, maxSpeed);
             body.angularVelocity = 0f;
+        }
+
+        private void ClearHolderAnimation()
+        {
+            if (holder != null)
+            {
+                holder.SetHoldingAnimation(false);
+            }
         }
 
         private void TickCurve(float deltaTime)

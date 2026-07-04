@@ -9,6 +9,11 @@ namespace KeepBallMoving
         [SerializeField] private PlayerRole role;
         [SerializeField] private float catchRadius = 1.8f;
         [SerializeField] private float bodyRadius = 0.5f;
+        [Header("Team Visuals")]
+        [SerializeField] private Color blueColor = new Color(0.05f, 0.33f, 1f, 1f);
+        [SerializeField] private Color redColor = new Color(0.95f, 0.12f, 0.11f, 1f);
+        [SerializeField] private Color blueHighlightColor = new Color(0.52f, 0.78f, 1f, 1f);
+        [SerializeField] private Color redHighlightColor = new Color(1f, 0.48f, 0.42f, 1f);
 
         private SpriteRenderer spriteRenderer;
         private CircleCollider2D bodyCollider;
@@ -16,12 +21,25 @@ namespace KeepBallMoving
         private Transform holdPointPivot;
         private Transform holdPointTransform;
         private SpriteRenderer holdPointRenderer;
+        private Animator animator;
         private Color baseColor;
+        private Color highlightColor;
         private Vector2 spawnPosition;
+        private Vector2 lastAnimationPosition;
         private float holdPointRadius;
         private float holdPointAngle;
         private float controlRangeMultiplier = 1f;
         private Coroutine knockbackRoutine;
+        private bool animatorHasRun;
+        private bool animatorHasHold;
+        private bool isHoldingAnimation;
+
+        private static readonly int RunAnimatorHash = Animator.StringToHash("run");
+        private static readonly int HoldAnimatorHash = Animator.StringToHash("hold");
+        private const float RunAnimationMoveThreshold = 0.0025f;
+        private const float FacingMoveThreshold = 0.001f;
+        private const int NormalSortingOrder = 30;
+        private const int HoldingSortingOrder = 100;
 
         public Team Team => team;
         public PlayerRole Role => role;
@@ -31,7 +49,7 @@ namespace KeepBallMoving
         public Vector2 HoldPointPosition => holdPointTransform != null ? holdPointTransform.position : transform.position;
         public bool IsKnockbackActive => knockbackRoutine != null;
 
-        public void Initialize(Team playerTeam, PlayerRole playerRole, int index, Vector2 startPosition, Sprite sprite, Sprite controlRangeSprite, Sprite holdPointSprite, Color color, float radius, float catchRange, float pointRadius)
+        public void Initialize(Team playerTeam, PlayerRole playerRole, int index, Vector2 startPosition, Sprite sprite, Sprite controlRangeSprite, Sprite holdPointSprite, float radius, float catchRange, float pointRadius)
         {
             team = playerTeam;
             role = playerRole;
@@ -39,12 +57,14 @@ namespace KeepBallMoving
             catchRadius = catchRange;
             holdPointRadius = pointRadius;
             spawnPosition = startPosition;
-            baseColor = color;
+            baseColor = GetConfiguredTeamColor(playerTeam);
+            highlightColor = GetConfiguredHighlightColor(playerTeam);
             holdPointAngle = Random.Range(0f, 360f);
 
             gameObject.name = $"{team}{role}_{index:00}";
             transform.position = startPosition;
             transform.localScale = Vector3.one * (bodyRadius * 2f);
+            lastAnimationPosition = startPosition;
 
             spriteRenderer = GetComponent<SpriteRenderer>();
             if (spriteRenderer == null)
@@ -63,7 +83,8 @@ namespace KeepBallMoving
             }
 
             spriteRenderer.color = baseColor;
-            spriteRenderer.sortingOrder = 20;
+            spriteRenderer.flipX = false;
+            spriteRenderer.sortingOrder = NormalSortingOrder;
 
             bodyCollider = GetComponent<CircleCollider2D>();
             if (bodyCollider == null)
@@ -74,8 +95,10 @@ namespace KeepBallMoving
             bodyCollider.isTrigger = true;
             bodyCollider.radius = 0.5f;
 
-            CreateControlRangeVisual(controlRangeSprite, color);
-            CreateHoldPointVisual(holdPointSprite, color);
+            CreateControlRangeVisual(controlRangeSprite, baseColor);
+            CreateHoldPointVisual(holdPointSprite, baseColor);
+            CacheAnimator();
+            SetHoldingAnimation(false);
         }
 
         public void SetControlRangeMultiplier(float multiplier)
@@ -135,6 +158,38 @@ namespace KeepBallMoving
             transform.position = position;
         }
 
+        public void SetHoldingAnimation(bool holding)
+        {
+            isHoldingAnimation = holding;
+            SetCatchHighlighted(holding);
+            SetAnimatorBool(HoldAnimatorHash, animatorHasHold, holding);
+            if (holding)
+            {
+                SetAnimatorBool(RunAnimatorHash, animatorHasRun, false);
+            }
+        }
+
+        public void OverrideVisualColors(Color color, Color catchHighlightColor)
+        {
+            baseColor = color;
+            highlightColor = catchHighlightColor;
+
+            if (spriteRenderer != null)
+            {
+                spriteRenderer.color = baseColor;
+            }
+
+            if (controlRangeRenderer != null)
+            {
+                controlRangeRenderer.color = new Color(baseColor.r, baseColor.g, baseColor.b, 0.18f);
+            }
+
+            if (holdPointRenderer != null)
+            {
+                holdPointRenderer.color = new Color(baseColor.r, baseColor.g, baseColor.b, 1f);
+            }
+        }
+
         public void KnockbackTo(Vector2 targetPosition, float duration)
         {
             if (knockbackRoutine != null)
@@ -152,7 +207,8 @@ namespace KeepBallMoving
                 return;
             }
 
-            spriteRenderer.color = highlighted ? Color.Lerp(baseColor, Color.white, 0.35f) : baseColor;
+            spriteRenderer.color = highlighted ? highlightColor : baseColor;
+            spriteRenderer.sortingOrder = highlighted ? HoldingSortingOrder : NormalSortingOrder;
             transform.localScale = Vector3.one * (bodyRadius * 2f * (highlighted ? 1.12f : 1f));
             UpdateControlRangeScale();
             UpdateHoldPointLayout();
@@ -178,7 +234,33 @@ namespace KeepBallMoving
 
             spawnPosition = position;
             transform.position = spawnPosition;
+            lastAnimationPosition = spawnPosition;
+            SetHoldingAnimation(false);
             SetCatchHighlighted(false);
+        }
+
+        private void LateUpdate()
+        {
+            CacheAnimator();
+
+            Vector2 currentPosition = transform.position;
+            Vector2 movement = currentPosition - lastAnimationPosition;
+            UpdateSpriteFacing(movement);
+
+            bool isRunning = !isHoldingAnimation && movement.sqrMagnitude > RunAnimationMoveThreshold * RunAnimationMoveThreshold;
+            SetAnimatorBool(RunAnimatorHash, animatorHasRun, isRunning);
+            SetAnimatorBool(HoldAnimatorHash, animatorHasHold, isHoldingAnimation);
+            lastAnimationPosition = currentPosition;
+        }
+
+        private void UpdateSpriteFacing(Vector2 movement)
+        {
+            if (spriteRenderer == null || Mathf.Abs(movement.x) <= FacingMoveThreshold)
+            {
+                return;
+            }
+
+            spriteRenderer.flipX = movement.x < 0f;
         }
 
         private IEnumerator KnockbackRoutine(Vector2 targetPosition, float duration)
@@ -196,6 +278,68 @@ namespace KeepBallMoving
 
             transform.position = targetPosition;
             knockbackRoutine = null;
+        }
+
+        private void CacheAnimator()
+        {
+            if (animator != null)
+            {
+                return;
+            }
+
+            animator = GetComponent<Animator>();
+            if (animator == null)
+            {
+                animator = GetComponentInChildren<Animator>();
+            }
+
+            if (animator == null)
+            {
+                return;
+            }
+
+            animatorHasRun = HasAnimatorParameter("run", AnimatorControllerParameterType.Bool);
+            animatorHasHold = HasAnimatorParameter("hold", AnimatorControllerParameterType.Bool);
+        }
+
+        private Color GetConfiguredTeamColor(Team playerTeam)
+        {
+            return playerTeam == Team.Blue ? blueColor : redColor;
+        }
+
+        private Color GetConfiguredHighlightColor(Team playerTeam)
+        {
+            return playerTeam == Team.Blue ? blueHighlightColor : redHighlightColor;
+        }
+
+        private bool HasAnimatorParameter(string parameterName, AnimatorControllerParameterType parameterType)
+        {
+            if (animator == null)
+            {
+                return false;
+            }
+
+            AnimatorControllerParameter[] parameters = animator.parameters;
+            for (int i = 0; i < parameters.Length; i++)
+            {
+                AnimatorControllerParameter parameter = parameters[i];
+                if (parameter.type == parameterType && parameter.name == parameterName)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private void SetAnimatorBool(int parameterHash, bool hasParameter, bool value)
+        {
+            if (animator == null || !hasParameter)
+            {
+                return;
+            }
+
+            animator.SetBool(parameterHash, value);
         }
 
         private void CreateControlRangeVisual(Sprite controlRangeSprite, Color color)

@@ -17,6 +17,9 @@ namespace KeepBallMoving
         [Header("Field")]
         [SerializeField] private float fieldWidth = 30f;
         [SerializeField] private float fieldHeight = 17f;
+        [SerializeField] private Sprite fieldSprite;
+        [SerializeField] private string fieldSpriteResourcePath = "KeepBallMoving/BG2";
+        [SerializeField] private Color fieldSpriteTint = Color.white;
         [SerializeField] private float wallThickness = 0.5f;
         [SerializeField] private float goalDepth = 1f;
         [SerializeField] private float goalHeight = 4.5f;
@@ -29,6 +32,7 @@ namespace KeepBallMoving
         [SerializeField] private float holdPointRadius = 0.18f;
 
         [Header("Prefabs")]
+        [SerializeField] private GameObject fieldVisualPrefab;
         [SerializeField] private PlayerAgent bluePlayerPrefab;
         [SerializeField] private PlayerAgent redPlayerPrefab;
         [SerializeField] private PlayerAgent phantomPlayerPrefab;
@@ -169,10 +173,9 @@ namespace KeepBallMoving
 
         private Color fieldColor = new Color(0.08f, 0.42f, 0.19f, 1f);
         private Color lineColor = new Color(0.93f, 0.97f, 0.93f, 1f);
-        private Color blueColor = new Color(0.05f, 0.33f, 1f, 1f);
-        private Color redColor = new Color(0.95f, 0.12f, 0.11f, 1f);
 
         private const string DefaultPlayerPrefabPath = "KeepBallMoving/KeepBallPlayer";
+        private const string DefaultRedPlayerPrefabPath = "KeepBallMoving/KeepBallPlayer1";
         private const string DefaultPhantomPlayerPrefabPath = "KeepBallMoving/KeepBallPhantomPlayer";
         private const string DefaultBallPrefabPath = "KeepBallMoving/KeepBallBall";
         private const string DefaultPhantomBallPrefabPath = "KeepBallMoving/KeepBallPhantomBall";
@@ -180,6 +183,8 @@ namespace KeepBallMoving
         private const string DefaultRedShockwavePrefabPath = "KeepBallMoving/KeepBallRedShockwave";
         private const string DefaultTalentBadgePrefabPath = "KeepBallMoving/KeepBallTalentBadge";
         private const string DefaultGoalEffectPrefabPath = "KeepBallMoving/GoalEffect";
+        private const string DefaultFieldVisualPrefabPath = "KeepBallMoving/KeepBallField";
+        private const string DefaultFieldSpritePath = "KeepBallMoving/BG2";
         private const float TalentBadgeWidth = 246f;
         private const float TalentBadgeHeight = 44f;
         private const float TalentBadgeGap = 6f;
@@ -665,10 +670,16 @@ namespace KeepBallMoving
         private void LoadDefaultPrefabs()
         {
             PlayerAgent defaultPlayerPrefab = null;
+            PlayerAgent defaultRedPlayerPrefab = null;
 
             if (bluePlayerPrefab == null || redPlayerPrefab == null)
             {
                 defaultPlayerPrefab = Resources.Load<PlayerAgent>(DefaultPlayerPrefabPath);
+            }
+
+            if (redPlayerPrefab == null)
+            {
+                defaultRedPlayerPrefab = Resources.Load<PlayerAgent>(DefaultRedPlayerPrefabPath);
             }
 
             if (bluePlayerPrefab == null)
@@ -678,7 +689,7 @@ namespace KeepBallMoving
 
             if (redPlayerPrefab == null)
             {
-                redPlayerPrefab = defaultPlayerPrefab;
+                redPlayerPrefab = defaultRedPlayerPrefab != null ? defaultRedPlayerPrefab : defaultPlayerPrefab;
             }
 
             if (phantomPlayerPrefab == null)
@@ -715,6 +726,17 @@ namespace KeepBallMoving
             {
                 goalEffectPrefab = Resources.Load<GameObject>(DefaultGoalEffectPrefabPath);
             }
+
+            if (fieldVisualPrefab == null)
+            {
+                fieldVisualPrefab = Resources.Load<GameObject>(DefaultFieldVisualPrefabPath);
+            }
+
+            if (fieldVisualPrefab == null && fieldSprite == null)
+            {
+                string spritePath = string.IsNullOrWhiteSpace(fieldSpriteResourcePath) ? DefaultFieldSpritePath : fieldSpriteResourcePath;
+                fieldSprite = Resources.Load<Sprite>(spritePath);
+            }
         }
 
         private void SetupCamera()
@@ -742,7 +764,7 @@ namespace KeepBallMoving
             GameObject fieldRoot = new GameObject("Field");
             fieldRoot.transform.SetParent(transform);
 
-            CreateVisualRect("Grass", Vector2.zero, new Vector2(fieldWidth, fieldHeight), fieldColor, -10, fieldRoot.transform);
+            CreateFieldVisual(fieldRoot.transform);
             CreateVisualRect("CenterLine", Vector2.zero, new Vector2(0.06f, fieldHeight), lineColor, 0, fieldRoot.transform);
             CreateVisualRect("HalfwayMark", Vector2.zero, new Vector2(0.25f, 0.25f), lineColor, 1, fieldRoot.transform);
             CreateVisualRect("TopLine", new Vector2(0f, fieldHeight * 0.5f), new Vector2(fieldWidth, 0.06f), lineColor, 0, fieldRoot.transform);
@@ -766,6 +788,25 @@ namespace KeepBallMoving
 
             CreateGoal(GoalSide.Left, new Vector2(-fieldWidth * 0.5f - goalDepth * 0.5f, 0f), fieldRoot.transform);
             CreateGoal(GoalSide.Right, new Vector2(fieldWidth * 0.5f + goalDepth * 0.5f, 0f), fieldRoot.transform);
+        }
+
+        private void CreateFieldBackground(Transform parent)
+        {
+            Sprite backgroundSprite = fieldSprite != null ? fieldSprite : squareSprite;
+            Color backgroundColor = fieldSprite != null ? fieldSpriteTint : fieldColor;
+            CreateVisualRect("Grass", Vector2.zero, new Vector2(fieldWidth, fieldHeight), backgroundColor, -10, parent, backgroundSprite);
+        }
+
+        private void CreateFieldVisual(Transform parent)
+        {
+            if (fieldVisualPrefab != null)
+            {
+                GameObject visual = Instantiate(fieldVisualPrefab, parent);
+                visual.name = "KeepBallField";
+                return;
+            }
+
+            CreateFieldBackground(parent);
         }
 
         private void CreatePenaltyBox(string name, float direction, Transform parent)
@@ -793,17 +834,23 @@ namespace KeepBallMoving
             renderer.sortingOrder = 1;
         }
 
-        private GameObject CreateVisualRect(string name, Vector2 position, Vector2 size, Color color, int sortingOrder, Transform parent)
+        private GameObject CreateVisualRect(string name, Vector2 position, Vector2 size, Color color, int sortingOrder, Transform parent, Sprite spriteOverride = null)
         {
             GameObject rect = new GameObject(name);
             rect.transform.SetParent(parent);
             rect.transform.position = position;
-            rect.transform.localScale = new Vector3(size.x, size.y, 1f);
 
             SpriteRenderer renderer = rect.AddComponent<SpriteRenderer>();
-            renderer.sprite = squareSprite;
+            renderer.sprite = spriteOverride != null ? spriteOverride : squareSprite;
             renderer.color = color;
             renderer.sortingOrder = sortingOrder;
+
+            Vector2 spriteSize = renderer.sprite != null ? renderer.sprite.bounds.size : Vector2.one;
+            rect.transform.localScale = new Vector3(
+                size.x / Mathf.Max(0.001f, spriteSize.x),
+                size.y / Mathf.Max(0.001f, spriteSize.y),
+                1f);
+
             return rect;
         }
 
@@ -971,7 +1018,6 @@ namespace KeepBallMoving
                 team == Team.Blue ? bluePlayerSprite : redPlayerSprite,
                 controlRangeSprite,
                 holdPointSprite,
-                team == Team.Blue ? blueColor : redColor,
                 playerRadius,
                 catchRadius,
                 holdPointRadius);
@@ -1322,10 +1368,11 @@ namespace KeepBallMoving
                 team == Team.Blue ? bluePlayerSprite : redPlayerSprite,
                 controlRangeSprite,
                 holdPointSprite,
-                GetPhantomPlayerColor(team),
                 playerRadius * 0.82f,
                 catchRadius,
                 holdPointRadius);
+            Color phantomColor = GetPhantomPlayerColor(team);
+            activePhantomPlayer.OverrideVisualColors(phantomColor, phantomColor);
 
             activePhantomPlayerTeam = team;
             ball.BeginHold(activePhantomPlayer, minHoldRadius, team == Team.Blue ? phantomPlayerHoldAngularSpeed : -phantomPlayerHoldAngularSpeed);
@@ -1645,13 +1692,17 @@ namespace KeepBallMoving
         {
             foreach (PlayerAgent player in bluePlayers)
             {
-                player.SetCatchHighlighted(CanPlayerCatchBall(player, ball));
+                player.SetCatchHighlighted(ball.Holder == player);
             }
 
             foreach (PlayerAgent player in redPlayers)
             {
-                bool highlighted = ball.State == BallState.Free && (IsPvpMode() ? CanPlayerCatchBall(player, ball) : CanRedAutoControlBall(player));
-                player.SetCatchHighlighted(highlighted);
+                player.SetCatchHighlighted(ball.Holder == player);
+            }
+
+            if (activePhantomPlayer != null)
+            {
+                activePhantomPlayer.SetCatchHighlighted(ball.Holder == activePhantomPlayer);
             }
         }
 
