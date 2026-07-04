@@ -5,7 +5,7 @@ namespace KeepBallMoving
 {
     public sealed class KeepBallTalentBadge : MonoBehaviour
     {
-        private const float BadgeWidth = 246f;
+        private const float BadgeWidth = 188f;
         private const float BadgeHeight = 44f;
         private const float IconSize = 30f;
 

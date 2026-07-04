@@ -2,7 +2,7 @@
 
 ## 1. 项目目标
 
-《别让球停下来》是一个 Unity 2D 顶视角足球原型。当前目标不是完整足球模拟，而是验证一个快速、可玩的核心循环：球不能轻易停下，玩家通过抓球、蓄力、传球、射门和天赋选择来对抗红方 AI。
+《别让球停下来》是一个 Unity 2D 顶视角足球原型。当前目标不是完整足球模拟，而是验证一个快速、可玩的核心循环：球不能轻易停下，玩家通过抓球、蓄力、传球、射门和天赋选择来对抗红方 AI，或在 PVP 模式下让红方也由玩家控制。
 
 核心循环：
 
@@ -10,7 +10,8 @@
 球在大球场里持续运动
 蓝方和红方球员各自跑位
 蓝方由玩家控制抓球和释放
-红方由 AI 自动接球、传球和射门
+PVE 下红方由 AI 自动接球、传球和射门
+PVP 下红方由另一名玩家控制抓球和释放
 进球后计分并进入三选一天赋
 选完天赋后由失球方开球
 ```
@@ -18,7 +19,7 @@
 当前优先级：
 
 ```text
-先保证物理、控球、传球、射门、进球和回合重置可玩
+先保证物理、控球、传球、射门、进球、回合重置和模式切换可玩
 再逐步完善 AI 强度、天赋组合、视觉表现和手感
 ```
 
@@ -267,16 +268,38 @@ playersPerTeam = 5
 
 球员有控制范围圈。大脚怪前锋天赋会同步更新前锋的范围圈显示。
 
-### 4.4 蓝方玩家操作
+### 4.4 PVE / PVP 模式
+
+当前支持两种模式：
+
+```text
+PVE：蓝方玩家控制，红方 AI 控制。
+PVP：蓝方玩家控制，红方玩家控制。
+```
+
+默认模式是 `PVE`。可以在 `KeepBallGameManager` 的 Inspector 中修改 `matchMode`，也可以在游戏中按 `M` 切换模式。切换模式会重新开始比赛并清空当前比分和天赋。
+
+隔离规则：
+
+- PVE 下红方继续使用原有 AI 自动接球、蓄力、传球和射门。
+- PVP 下红方 AI 自动接球和自动出球关闭，红方玩家接管抓球、蓄力、释放和幻影球员。
+- PVP 下红方球员仍保留自动跑位，但移动速度不再受红方 AI 强度参数影响。
+- PVE 和 PVP 共用球员、球、天赋、进球和回合重置逻辑。
+
+### 4.5 玩家操作
 
 键盘操作：
 
 ```text
-空格：抓球 / 开始蓄力 / 确认踢出幻影球员持有的球
-松开空格：释放足球
+蓝方空格：抓球 / 开始蓄力 / 确认踢出幻影球员持有的球
+蓝方松开空格：释放足球
+蓝方 Z：拥有幻影球员天赋后，在当前传球窗口中生成幻影球员
+红方 Enter 或右 Ctrl：PVP 下抓球 / 开始蓄力 / 确认踢出幻影球员持有的球
+红方松开 Enter 或右 Ctrl：PVP 下释放足球
+红方右 Shift 或 /：PVP 下生成幻影球员
+M：切换 PVE / PVP 并重新开始
 R：重置当前回合
 N：重新开始比赛并清空天赋
-Z：拥有幻影球员天赋后，在当前传球窗口中生成幻影球员
 方向键左右：三选一天赋界面切换选择
 鼠标点击：选择天赋
 ```
@@ -284,15 +307,27 @@ Z：拥有幻影球员天赋后，在当前传球窗口中生成幻影球员
 手柄操作：
 
 ```text
-A：抓球 / 蓄力 / 释放 / 确认选择天赋
-B：召唤幻影球员
-左摇杆左右：切换天赋选择
-右摇杆左右：如果项目配置了 RightStickHorizontal，也可切换天赋选择
+手柄1 A：蓝方抓球 / 蓄力 / 释放 / 确认蓝方天赋
+手柄1 B：蓝方召唤幻影球员
+手柄2 A：PVP 下红方抓球 / 蓄力 / 释放 / 确认红方天赋
+手柄2 B：PVP 下红方召唤幻影球员
+手柄1 左右摇杆：蓝方选择天赋
+手柄2 左右摇杆：红方选择天赋
+PVE 下仍兼容任意手柄 A/B 操作蓝方
 ```
 
-### 4.5 红方 AI
+手柄左右选择依赖旧 Input Manager 轴配置。代码会优先尝试：
 
-红方会自动：
+```text
+Joystick1Horizontal / P1Horizontal
+Joystick2Horizontal / P2Horizontal
+```
+
+如果这些轴没有配置，会退回现有的 `Horizontal` 和 `RightStickHorizontal`，不会报错。
+
+### 4.6 红方 AI
+
+PVE 模式下，红方会自动：
 
 - 根据控制范围接球。
 - 根据职责选择传球或射门。
@@ -301,7 +336,9 @@ B：召唤幻影球员
 
 相关参数在 `KeepBallGameManager` 的 `Red AI Difficulty` 区域。
 
-### 4.6 比分和足球规则
+PVP 模式下，红方 AI 自动接球和自动出球不会执行，但红方球员仍然自动跑位。
+
+### 4.7 比分和足球规则
 
 上方 UI 显示蓝红比分。
 
@@ -312,6 +349,16 @@ B：召唤幻影球员
 红方进球 -> 蓝方下一轮开球
 ```
 
+进球演出：
+
+- 进球瞬间会锁定当前回合。
+- `Time.timeScale` 降低，球和球员整体进入慢动作。
+- 破门的球会冻结在进球位置，确保镜头演出期间可见。
+- 破门位置会生成 `GoalEffect.prefab` 进球特效。
+- 镜头快速移动并放大到破门的球所在位置。
+- 屏幕中央显示“蓝方进球！”或“红方进球！”。
+- 演出结束后镜头和时间缩放恢复，再进入三选一天赋选择。
+
 每次重新发球时：
 
 - 所有球员回到阵型位置。
@@ -319,7 +366,7 @@ B：召唤幻影球员
 - 开球持球期间，开球球员不会被人数变化、阵型重新分布或移动 AI 推走。
 - 开完球后，开球球员恢复正常移动。
 
-### 4.7 天赋系统
+### 4.8 天赋系统
 
 每次进球后出现三选一天赋界面。
 
@@ -348,7 +395,7 @@ B：召唤幻影球员
 
 香蕉球暂时保留枚举和曲线代码，但当前不在可选天赋池中。
 
-### 4.8 幻影足球规则
+### 4.9 幻影足球规则
 
 获得“幻影足球”后，己方每次传球会生成幻影足球。
 
@@ -360,7 +407,9 @@ B：召唤幻影球员
 - 2 层：2 颗，平分 60 度散射角。
 - 3 层：3 颗，平分 60 度散射角。
 - 幻影足球不会被己方 hold。
-- 幻影足球进球也算有效。
+- 幻影足球打进对方球门算有效进球。
+- 幻影足球有效进球时不会立刻销毁，会保留给进球慢镜头观看。
+- 幻影足球进入自家球门不计分，会直接销毁。
 - 幻影足球弹射达到 3 次后销毁。
 - 幻影足球命中敌方球员本体后销毁。
 - 当前“敌方拦截”只看球员本体半径和幻影足球半径，不再使用控球范围。
@@ -372,7 +421,7 @@ B：召唤幻影球员
 敌方球员中心到幻影足球中心的距离 <= 敌方球员身体半径 + 幻影足球半径
 ```
 
-### 4.9 幻影球员规则
+### 4.10 幻影球员规则
 
 获得“幻影球员”后，蓝方传球后可按 `Z/B` 在球所在位置生成一个幻影球员。
 
@@ -386,7 +435,7 @@ B：召唤幻影球员
 - 传球后如果暂时不召唤，机会会保留到本轮后续蓝方传球窗口。
 - 一旦成功召唤，本轮机会清零，直到下一次进球后重新发球才恢复。
 
-### 4.10 立场类天赋
+### 4.11 立场类天赋
 
 护球立场和传球立场都会产生圆形震荡波。
 
@@ -426,6 +475,7 @@ KeepBallBlueShockwave.prefab
 KeepBallRedShockwave.prefab
 KeepBallPhantomPlayer.prefab
 KeepBallTalentBadge.prefab
+GoalEffect.prefab
 ```
 
 用途：
@@ -437,10 +487,21 @@ KeepBallTalentBadge.prefab
 - `KeepBallRedShockwave.prefab`：红方立场特效。
 - `KeepBallPhantomPlayer.prefab`：幻影球员预制体。
 - `KeepBallTalentBadge.prefab`：左右下角天赋条目 UI 预制体。
+- `GoalEffect.prefab`：进球瞬间生成在破门位置的世界特效。
 
 如果 Inspector 中没有手动指定，`KeepBallGameManager` 会从 Resources 自动加载默认预制体。
 
 ## 6. 常用调参位置
+
+### 6.0 模式与 PVP 输入
+
+```csharp
+matchMode
+redPrimaryKey
+redAlternatePrimaryKey
+redPhantomKey
+redAlternatePhantomKey
+```
 
 ### 6.1 控球与释放
 
@@ -470,7 +531,18 @@ redPassSpeed
 redReleaseSpeed
 ```
 
-### 6.3 红方 AI 强度
+### 6.3 进球演出
+
+```csharp
+goalSlowTimeScale
+goalCameraMoveDuration
+goalCameraReturnDuration
+goalDisplayDuration
+goalZoomOrthographicSize
+goalEffectLifetime
+```
+
+### 6.4 红方 AI 强度
 
 ```csharp
 redAiStrength
@@ -489,7 +561,7 @@ redMaxShotAimError
 redMaxKickSpeedRandomness
 ```
 
-### 6.4 天赋参数
+### 6.5 天赋参数
 
 ```csharp
 phantomBallSpawnOffset
@@ -508,7 +580,7 @@ phantomPlayerHoldAngularSpeed
 phantomPlayerColor
 ```
 
-### 6.5 预制体字段
+### 6.6 预制体字段
 
 ```csharp
 bluePlayerPrefab
@@ -519,6 +591,7 @@ phantomBallPrefab
 blueShockwavePrefab
 redShockwavePrefab
 talentBadgePrefab
+goalEffectPrefab
 ```
 
 ## 7. 当前验证方式
@@ -542,7 +615,9 @@ dotnet build Assembly-CSharp.csproj --no-restore -v:minimal -m:1 -p:BaseIntermed
 - 天赋数据目前仍写在 `KeepBallGameManager` 中，还没有迁移到 `ScriptableObject`。
 - 香蕉球代码保留但不在当前天赋池。
 - 幻影足球拦截目前是距离检测，不是物理碰撞回调；判断半径已经改为球员本体半径。
-- `RightStickHorizontal` 轴如果项目 Input Manager 中没有配置，会被捕获并静默忽略。
+- PVP 当前是“玩家控制抓球、蓄力、释放和幻影球员”，红方球员移动仍然是自动跑位。
+- PVP 手柄按钮按手柄编号隔离：手柄 1 控蓝方，手柄 2 控红方。
+- 手柄左右选择依赖 Input Manager 轴配置；未配置的轴会被捕获并静默忽略。
 - 当前 README 记录的是 `KeepBallMoving` 原型部分，不覆盖项目里其它系统。
 
 ## 9. 后续建议

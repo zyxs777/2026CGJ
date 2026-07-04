@@ -7,6 +7,13 @@ namespace KeepBallMoving
 {
     public sealed class KeepBallGameManager : MonoBehaviour
     {
+        [Header("Mode")]
+        [SerializeField] private MatchMode matchMode = MatchMode.Pve;
+        [SerializeField] private KeyCode redPrimaryKey = KeyCode.Return;
+        [SerializeField] private KeyCode redAlternatePrimaryKey = KeyCode.RightControl;
+        [SerializeField] private KeyCode redPhantomKey = KeyCode.RightShift;
+        [SerializeField] private KeyCode redAlternatePhantomKey = KeyCode.Slash;
+
         [Header("Field")]
         [SerializeField] private float fieldWidth = 30f;
         [SerializeField] private float fieldHeight = 17f;
@@ -30,6 +37,7 @@ namespace KeepBallMoving
         [SerializeField] private ShockwaveEffect blueShockwavePrefab;
         [SerializeField] private ShockwaveEffect redShockwavePrefab;
         [SerializeField] private KeepBallTalentBadge talentBadgePrefab;
+        [SerializeField] private GameObject goalEffectPrefab;
 
         [Header("Hold And Release")]
         [SerializeField] private float minHoldRadius = 0.9f;
@@ -85,6 +93,14 @@ namespace KeepBallMoving
         [SerializeField] private float phantomPlayerHoldAngularSpeed = 420f;
         [SerializeField] private Color phantomPlayerColor = new Color(0.42f, 0.92f, 1f, 0.78f);
 
+        [Header("Goal Presentation")]
+        [SerializeField, Range(0.05f, 1f)] private float goalSlowTimeScale = 0.18f;
+        [SerializeField] private float goalCameraMoveDuration = 0.28f;
+        [SerializeField] private float goalCameraReturnDuration = 0.24f;
+        [SerializeField] private float goalDisplayDuration = 0.8f;
+        [SerializeField] private float goalZoomOrthographicSize = 3.8f;
+        [SerializeField] private float goalEffectLifetime = 1.5f;
+
         private readonly List<PlayerAgent> bluePlayers = new List<PlayerAgent>();
         private readonly List<PlayerAgent> redPlayers = new List<PlayerAgent>();
         private readonly List<PlayerAgent> extraPlayers = new List<PlayerAgent>();
@@ -107,7 +123,11 @@ namespace KeepBallMoving
         private Canvas talentCanvas;
         private RectTransform blueTalentPanel;
         private RectTransform redTalentPanel;
+        private Camera gameplayCamera;
         private PhysicsMaterial2D bounceMaterial;
+        private Vector3 defaultCameraPosition;
+        private float defaultCameraOrthographicSize;
+        private float defaultFixedDeltaTime;
         private float chargeTime;
         private bool goalLocked;
         private int blueScore;
@@ -115,12 +135,19 @@ namespace KeepBallMoving
         private string stateText = "空格/A 抓球";
         private string messageText = "基础原型：空格/A 抓球，松开释放";
         private float messageUntil;
+        private string goalBannerText = string.Empty;
+        private Color goalBannerColor = Color.white;
+        private float goalBannerUntilRealtime;
         private float autoControlCooldownUntil;
         private float redCurrentHoldDelay;
         private bool blueHoldChargeArmed;
+        private bool redHoldChargeArmed;
         private int bluePhantomPlayerUsesRemaining;
+        private int redPhantomPlayerUsesRemaining;
         private bool bluePhantomPlayerPassWindowActive;
+        private bool redPhantomPlayerPassWindowActive;
         private PlayerAgent activePhantomPlayer;
+        private Team activePhantomPlayerTeam = Team.Blue;
         private PlayerAgent lockedKickoffPlayer;
         private bool kickoffPlayerLocked;
         private Vector2 lockedKickoffPosition;
@@ -129,6 +156,7 @@ namespace KeepBallMoving
         private int selectedTalentIndex;
         private float nextTalentMoveInputTime;
         private bool rightStickHorizontalMissing;
+        private readonly HashSet<string> missingInputAxes = new HashSet<string>();
         private readonly TalentOption[] currentTalentOptions = new TalentOption[TalentChoiceCount];
         private readonly bool[] talentOptionTaken = new bool[TalentChoiceCount];
         private Team talentFirstPickTeam = Team.Blue;
@@ -150,11 +178,18 @@ namespace KeepBallMoving
         private const string DefaultBlueShockwavePrefabPath = "KeepBallMoving/KeepBallBlueShockwave";
         private const string DefaultRedShockwavePrefabPath = "KeepBallMoving/KeepBallRedShockwave";
         private const string DefaultTalentBadgePrefabPath = "KeepBallMoving/KeepBallTalentBadge";
+        private const string DefaultGoalEffectPrefabPath = "KeepBallMoving/GoalEffect";
         private const float TalentBadgeWidth = 246f;
         private const float TalentBadgeHeight = 44f;
         private const float TalentBadgeGap = 6f;
         private const int TalentChoiceCount = 3;
         private const int TalentTypeCount = 9;
+
+        private enum MatchMode
+        {
+            Pve,
+            Pvp
+        }
 
         private enum TalentId
         {
@@ -180,6 +215,7 @@ namespace KeepBallMoving
         private void Awake()
         {
             Physics2D.gravity = Vector2.zero;
+            defaultFixedDeltaTime = Time.fixedDeltaTime;
             LoadDefaultPrefabs();
             CreateRuntimeAssets();
             SetupCamera();
@@ -223,15 +259,21 @@ namespace KeepBallMoving
                 return;
             }
 
+            if (Input.GetKeyDown(KeyCode.M))
+            {
+                ToggleMatchMode();
+                return;
+            }
+
             if (ball.State == BallState.Held)
             {
                 ball.TickHold(Time.deltaTime);
 
                 if (activePhantomPlayer != null && ball.Holder == activePhantomPlayer)
                 {
-                    stateText = "幻影球员控球：按空格/A 踢出";
+                    stateText = $"{GetTeamLabel(activePhantomPlayerTeam)}幻影球员控球：按{GetPrimaryActionHint(activePhantomPlayerTeam)}踢出";
 
-                    if (IsPrimaryActionDown())
+                    if (IsPrimaryActionDown(activePhantomPlayerTeam))
                     {
                         ReleasePhantomPlayerBall();
                     }
@@ -241,58 +283,50 @@ namespace KeepBallMoving
 
                 if (ball.Holder != null && ball.Holder.Team == Team.Red)
                 {
-                    chargeTime += Time.deltaTime;
-                    float holdDelay = Mathf.Max(0.05f, redCurrentHoldDelay);
-                    stateText = $"红方控球 {Mathf.Clamp01(chargeTime / holdDelay):P0}";
-
-                    if (chargeTime >= holdDelay)
+                    if (IsPvpMode())
                     {
-                        ReleaseRedHeldBall();
+                        HandlePlayerHeldBall(Team.Red, Time.deltaTime);
+                    }
+                    else
+                    {
+                        HandleRedAiHeldBall(Time.deltaTime);
                     }
 
                     return;
                 }
 
-                if (!blueHoldChargeArmed)
-                {
-                    stateText = "蓝方持球：按住空格/A 蓄力";
-
-                    if (IsPrimaryActionDown())
-                    {
-                        blueHoldChargeArmed = true;
-                        chargeTime = 0f;
-                        ShowMessage("蓝方蓄力中");
-                    }
-
-                    return;
-                }
-
-                chargeTime += Time.deltaTime;
-                stateText = $"蓝方蓄力 {Mathf.Clamp01(chargeTime / maxChargeTime):P0}";
-
-                if (IsPrimaryActionUp())
-                {
-                    ReleaseHeldBall();
-                }
-
+                HandlePlayerHeldBall(Team.Blue, Time.deltaTime);
                 return;
             }
 
-            if (IsPhantomActionDown() && TryActivatePhantomPlayer())
+            if (IsPhantomActionDown(Team.Blue) && TryActivatePhantomPlayer(Team.Blue))
+            {
+                return;
+            }
+
+            if (IsPvpMode() && IsPhantomActionDown(Team.Red) && TryActivatePhantomPlayer(Team.Red))
             {
                 return;
             }
 
             UpdateControlHighlights();
-            stateText = FindNearestCatchablePlayer() != null ? "可抓球：按空格/A" : "等待球靠近蓝方";
+            bool blueCanCatch = FindNearestCatchablePlayer(Team.Blue) != null;
+            bool redCanCatch = IsPvpMode() && FindNearestCatchablePlayer(Team.Red) != null;
+            stateText = GetFreeBallStateText(blueCanCatch, redCanCatch);
 
-            if (IsPrimaryActionDown())
+            if (IsPrimaryActionDown(Team.Blue))
             {
-                TryCatchBall();
+                TryCatchBall(Team.Blue);
                 return;
             }
 
-            if (TryAutoRedCatchBall())
+            if (IsPvpMode() && IsPrimaryActionDown(Team.Red))
+            {
+                TryCatchBall(Team.Red);
+                return;
+            }
+
+            if (!IsPvpMode() && TryAutoRedCatchBall())
             {
                 return;
             }
@@ -301,35 +335,159 @@ namespace KeepBallMoving
 
         private bool IsPrimaryActionDown()
         {
-            return Input.GetKeyDown(KeyCode.Space) || Input.GetKeyDown(KeyCode.JoystickButton0);
+            return IsPrimaryActionDown(Team.Blue);
         }
 
-        private bool IsPrimaryActionUp()
+        private bool IsPrimaryActionDown(Team team)
         {
-            return Input.GetKeyUp(KeyCode.Space) || Input.GetKeyUp(KeyCode.JoystickButton0);
+            if (team == Team.Red)
+            {
+                return Input.GetKeyDown(redPrimaryKey) ||
+                    Input.GetKeyDown(redAlternatePrimaryKey) ||
+                    Input.GetKeyDown(KeyCode.Joystick2Button0);
+            }
+
+            return Input.GetKeyDown(KeyCode.Space) ||
+                Input.GetKeyDown(KeyCode.Joystick1Button0) ||
+                (!IsPvpMode() && Input.GetKeyDown(KeyCode.JoystickButton0));
         }
 
-        private bool IsPhantomActionDown()
+        private bool IsPrimaryActionUp(Team team)
         {
-            return Input.GetKeyDown(KeyCode.Z) || Input.GetKeyDown(KeyCode.JoystickButton1);
+            if (team == Team.Red)
+            {
+                return Input.GetKeyUp(redPrimaryKey) ||
+                    Input.GetKeyUp(redAlternatePrimaryKey) ||
+                    Input.GetKeyUp(KeyCode.Joystick2Button0);
+            }
+
+            return Input.GetKeyUp(KeyCode.Space) ||
+                Input.GetKeyUp(KeyCode.Joystick1Button0) ||
+                (!IsPvpMode() && Input.GetKeyUp(KeyCode.JoystickButton0));
+        }
+
+        private bool IsPhantomActionDown(Team team)
+        {
+            if (team == Team.Red)
+            {
+                return Input.GetKeyDown(redPhantomKey) ||
+                    Input.GetKeyDown(redAlternatePhantomKey) ||
+                    Input.GetKeyDown(KeyCode.Joystick2Button1);
+            }
+
+            return Input.GetKeyDown(KeyCode.Z) ||
+                Input.GetKeyDown(KeyCode.Joystick1Button1) ||
+                (!IsPvpMode() && Input.GetKeyDown(KeyCode.JoystickButton1));
+        }
+
+        private bool IsPvpMode()
+        {
+            return matchMode == MatchMode.Pvp;
+        }
+
+        private string GetMatchModeLabel()
+        {
+            return IsPvpMode() ? "PVP" : "PVE";
+        }
+
+        private void HandlePlayerHeldBall(Team team, float deltaTime)
+        {
+            if (!IsHoldChargeArmed(team))
+            {
+                stateText = $"{GetTeamLabel(team)}持球：按住{GetPrimaryActionHint(team)}蓄力";
+
+                if (IsPrimaryActionDown(team))
+                {
+                    SetHoldChargeArmed(team, true);
+                    chargeTime = 0f;
+                    ShowMessage($"{GetTeamLabel(team)}蓄力中");
+                }
+
+                return;
+            }
+
+            chargeTime += deltaTime;
+            stateText = $"{GetTeamLabel(team)}蓄力 {Mathf.Clamp01(chargeTime / maxChargeTime):P0}";
+
+            if (IsPrimaryActionUp(team))
+            {
+                ReleasePlayerHeldBall();
+            }
+        }
+
+        private void HandleRedAiHeldBall(float deltaTime)
+        {
+            chargeTime += deltaTime;
+            float holdDelay = Mathf.Max(0.05f, redCurrentHoldDelay);
+            stateText = $"红方控球 {Mathf.Clamp01(chargeTime / holdDelay):P0}";
+
+            if (chargeTime >= holdDelay)
+            {
+                ReleaseRedHeldBall();
+            }
+        }
+
+        private string GetPrimaryActionHint(Team team)
+        {
+            return team == Team.Red ? "Enter/右Ctrl/手柄2A" : "空格/手柄1A";
+        }
+
+        private string GetPhantomActionHint(Team team)
+        {
+            return team == Team.Red ? "右Shift或/或手柄2B" : "Z/手柄1B";
+        }
+
+        private string GetFreeBallStateText(bool blueCanCatch, bool redCanCatch)
+        {
+            if (IsPvpMode())
+            {
+                if (blueCanCatch && redCanCatch)
+                {
+                    return "双方都可抓球";
+                }
+
+                if (blueCanCatch)
+                {
+                    return "蓝方可抓球：空格/手柄1A";
+                }
+
+                if (redCanCatch)
+                {
+                    return "红方可抓球：Enter/右Ctrl/手柄2A";
+                }
+
+                return "等待球靠近任一方";
+            }
+
+            return blueCanCatch ? "可抓球：按空格/手柄1A" : "等待球靠近蓝方";
         }
 
         private void HandleTalentSelectionInput()
         {
-            int direction = GetTalentSelectionDirection();
+            int direction = GetTalentSelectionDirection(currentTalentPickingTeam);
             if (direction != 0 && Time.unscaledTime >= nextTalentMoveInputTime)
             {
                 selectedTalentIndex = FindNextSelectableTalentIndex(selectedTalentIndex, direction, currentTalentPickingTeam);
                 nextTalentMoveInputTime = Time.unscaledTime + 0.18f;
             }
 
-            if (IsPrimaryActionDown())
+            if (IsTalentConfirmDown())
             {
                 SelectTalent(selectedTalentIndex);
             }
         }
 
-        private int GetTalentSelectionDirection()
+        private bool IsTalentConfirmDown()
+        {
+            if (IsPrimaryActionDown(currentTalentPickingTeam))
+            {
+                return true;
+            }
+
+            return currentTalentPickingTeam != Team.Blue && IsPrimaryActionDown(Team.Blue);
+        }
+
+        private int GetTalentSelectionDirection(Team team)
         {
             if (Input.GetKeyDown(KeyCode.LeftArrow))
             {
@@ -341,7 +499,7 @@ namespace KeepBallMoving
                 return 1;
             }
 
-            float axis = GetAxisRawSafe("Horizontal");
+            float axis = GetTeamHorizontalAxis(team);
             if (Mathf.Abs(axis) < 0.55f)
             {
                 axis = GetRightStickHorizontal();
@@ -384,14 +542,37 @@ namespace KeepBallMoving
 
         private float GetAxisRawSafe(string axisName)
         {
+            if (missingInputAxes.Contains(axisName))
+            {
+                return 0f;
+            }
+
             try
             {
                 return Input.GetAxisRaw(axisName);
             }
             catch (System.ArgumentException)
             {
+                missingInputAxes.Add(axisName);
                 return 0f;
             }
+        }
+
+        private float GetTeamHorizontalAxis(Team team)
+        {
+            float axis = GetAxisRawSafe(team == Team.Blue ? "Joystick1Horizontal" : "Joystick2Horizontal");
+            if (Mathf.Abs(axis) >= 0.55f)
+            {
+                return axis;
+            }
+
+            axis = GetAxisRawSafe(team == Team.Blue ? "P1Horizontal" : "P2Horizontal");
+            if (Mathf.Abs(axis) >= 0.55f)
+            {
+                return axis;
+            }
+
+            return GetAxisRawSafe("Horizontal");
         }
 
         private float GetRightStickHorizontal()
@@ -490,6 +671,11 @@ namespace KeepBallMoving
             {
                 talentBadgePrefab = Resources.Load<KeepBallTalentBadge>(DefaultTalentBadgePrefabPath);
             }
+
+            if (goalEffectPrefab == null)
+            {
+                goalEffectPrefab = Resources.Load<GameObject>(DefaultGoalEffectPrefabPath);
+            }
         }
 
         private void SetupCamera()
@@ -507,6 +693,9 @@ namespace KeepBallMoving
             mainCamera.orthographic = true;
             mainCamera.orthographicSize = fieldHeight * 0.58f;
             mainCamera.backgroundColor = new Color(0.04f, 0.11f, 0.08f, 1f);
+            gameplayCamera = mainCamera;
+            defaultCameraPosition = mainCamera.transform.position;
+            defaultCameraOrthographicSize = mainCamera.orthographicSize;
         }
 
         private void BuildField()
@@ -912,17 +1101,28 @@ namespace KeepBallMoving
             ShowMessage("重新开始");
         }
 
+        private void ToggleMatchMode()
+        {
+            matchMode = IsPvpMode() ? MatchMode.Pve : MatchMode.Pvp;
+            RestartMatch();
+            ShowMessage($"切换为 {GetMatchModeLabel()}");
+        }
+
         private void ResetRound()
         {
+            RestoreGoalPresentationState();
             goalLocked = false;
             talentSelectionOpen = false;
             talentSecondPickPending = false;
             selectedTalentIndex = 0;
             nextTalentMoveInputTime = 0f;
             chargeTime = 0f;
-            blueHoldChargeArmed = false;
+            SetHoldChargeArmed(Team.Blue, false);
+            SetHoldChargeArmed(Team.Red, false);
             bluePhantomPlayerUsesRemaining = HasTalent(Team.Blue, TalentId.PhantomPlayer) ? 1 : 0;
+            redPhantomPlayerUsesRemaining = HasTalent(Team.Red, TalentId.PhantomPlayer) ? 1 : 0;
             bluePhantomPlayerPassWindowActive = false;
+            redPhantomPlayerPassWindowActive = false;
             redCurrentHoldDelay = redAutoHoldDelay;
             autoControlCooldownUntil = Time.time + redKickoffAutoHoldLockout;
             DestroyActivePhantomPlayer();
@@ -966,21 +1166,24 @@ namespace KeepBallMoving
             UpdateControlHighlights();
         }
 
-        private void TryCatchBall()
+        private void TryCatchBall(Team team)
         {
-            PlayerAgent catcher = FindNearestCatchablePlayer();
+            PlayerAgent catcher = FindNearestCatchablePlayer(team);
             if (catcher == null)
             {
-                ShowMessage("没有蓝方在抓球范围内");
+                ShowMessage($"没有{GetTeamLabel(team)}在抓球范围内");
                 return;
             }
 
             chargeTime = 0f;
-            blueHoldChargeArmed = true;
-            bluePhantomPlayerPassWindowActive = false;
+            SetHoldChargeArmed(Team.Blue, false);
+            SetHoldChargeArmed(Team.Red, false);
+            SetHoldChargeArmed(team, true);
+            SetPhantomPlayerPassWindowActive(Team.Blue, false);
+            SetPhantomPlayerPassWindowActive(Team.Red, false);
             ClearKickoffLockIfHolder(ball.Holder);
             DestroyActivePhantomPlayer();
-            ball.BeginHold(catcher, minHoldRadius, holdAngularSpeed);
+            ball.BeginHold(catcher, minHoldRadius, team == Team.Blue ? holdAngularSpeed : -holdAngularSpeed);
             ApplyCatchTalents(catcher.Team, catcher.Position);
             ShowMessage($"抓住：{catcher.name}");
         }
@@ -994,8 +1197,10 @@ namespace KeepBallMoving
             }
 
             chargeTime = 0f;
-            blueHoldChargeArmed = false;
-            bluePhantomPlayerPassWindowActive = false;
+            SetHoldChargeArmed(Team.Blue, false);
+            SetHoldChargeArmed(Team.Red, false);
+            SetPhantomPlayerPassWindowActive(Team.Blue, false);
+            SetPhantomPlayerPassWindowActive(Team.Red, false);
             ClearKickoffLockIfHolder(ball.Holder);
             DestroyActivePhantomPlayer();
             redCurrentHoldDelay = RollRedHoldDelay();
@@ -1005,7 +1210,7 @@ namespace KeepBallMoving
             return true;
         }
 
-        private void ReleaseHeldBall()
+        private void ReleasePlayerHeldBall()
         {
             PlayerAgent holder = ball.Holder;
             Team releaseTeam = holder != null ? holder.Team : Team.Blue;
@@ -1014,10 +1219,17 @@ namespace KeepBallMoving
             Vector2 releaseDirection = ball.Release(releaseSpeed);
             ClearKickoffLockIfHolder(holder);
             ApplyReleaseTalents(releaseTeam, ball.Position, releaseDirection, releaseSpeed);
-            bluePhantomPlayerPassWindowActive = releaseTeam == Team.Blue && bluePhantomPlayerUsesRemaining > 0 && HasTalent(Team.Blue, TalentId.PhantomPlayer);
+            SetPhantomPlayerPassWindowActive(Team.Blue, false);
+            SetPhantomPlayerPassWindowActive(Team.Red, false);
+            if (GetPhantomPlayerUsesRemaining(releaseTeam) > 0 && HasTalent(releaseTeam, TalentId.PhantomPlayer))
+            {
+                SetPhantomPlayerPassWindowActive(releaseTeam, true);
+            }
+
             ShowMessage(charge01 >= 0.95f ? "爆射！" : "释放！");
             chargeTime = 0f;
-            blueHoldChargeArmed = false;
+            SetHoldChargeArmed(Team.Blue, false);
+            SetHoldChargeArmed(Team.Red, false);
             autoControlCooldownUntil = Time.time + 0.35f;
         }
 
@@ -1030,55 +1242,59 @@ namespace KeepBallMoving
             Vector2 releaseDirection = ball.ReleaseToward(target, finalSpeed);
             ClearKickoffLockIfHolder(holder);
             ApplyReleaseTalents(releaseTeam, ball.Position, releaseDirection, finalSpeed);
-            bluePhantomPlayerPassWindowActive = false;
+            SetPhantomPlayerPassWindowActive(Team.Blue, false);
+            SetPhantomPlayerPassWindowActive(Team.Red, false);
             ShowMessage(message);
             chargeTime = 0f;
-            blueHoldChargeArmed = false;
+            SetHoldChargeArmed(Team.Blue, false);
+            SetHoldChargeArmed(Team.Red, false);
             autoControlCooldownUntil = Time.time + 0.45f;
         }
 
-        private bool TryActivatePhantomPlayer()
+        private bool TryActivatePhantomPlayer(Team team)
         {
-            if (bluePhantomPlayerUsesRemaining <= 0 || !bluePhantomPlayerPassWindowActive || activePhantomPlayer != null)
+            if (GetPhantomPlayerUsesRemaining(team) <= 0 || !IsPhantomPlayerPassWindowActive(team) || activePhantomPlayer != null)
             {
                 return false;
             }
 
-            if (!HasTalent(Team.Blue, TalentId.PhantomPlayer) || ball.State != BallState.Free)
+            if (!HasTalent(team, TalentId.PhantomPlayer) || ball.State != BallState.Free)
             {
                 return false;
             }
 
-            PlayerAgent prefab = phantomPlayerPrefab != null ? phantomPlayerPrefab : bluePlayerPrefab;
+            PlayerAgent prefab = phantomPlayerPrefab != null ? phantomPlayerPrefab : team == Team.Blue ? bluePlayerPrefab : redPlayerPrefab;
             if (prefab == null)
             {
                 ShowMessage("缺少幻影球员预制体");
                 return true;
             }
 
-            bluePhantomPlayerUsesRemaining = 0;
-            bluePhantomPlayerPassWindowActive = false;
+            SetPhantomPlayerUsesRemaining(team, 0);
+            SetPhantomPlayerPassWindowActive(team, false);
 
             Vector2 spawnPosition = ClampInsideField(ball.Position);
             activePhantomPlayer = Instantiate(prefab, spawnPosition, Quaternion.identity, playersRoot);
             activePhantomPlayer.Initialize(
-                Team.Blue,
+                team,
                 PlayerRole.Midfielder,
                 0,
                 spawnPosition,
-                bluePlayerSprite,
+                team == Team.Blue ? bluePlayerSprite : redPlayerSprite,
                 controlRangeSprite,
                 holdPointSprite,
-                phantomPlayerColor,
+                GetPhantomPlayerColor(team),
                 playerRadius * 0.82f,
                 catchRadius,
                 holdPointRadius);
 
-            ball.BeginHold(activePhantomPlayer, minHoldRadius, phantomPlayerHoldAngularSpeed);
+            activePhantomPlayerTeam = team;
+            ball.BeginHold(activePhantomPlayer, minHoldRadius, team == Team.Blue ? phantomPlayerHoldAngularSpeed : -phantomPlayerHoldAngularSpeed);
             chargeTime = 0f;
-            blueHoldChargeArmed = false;
+            SetHoldChargeArmed(Team.Blue, false);
+            SetHoldChargeArmed(Team.Red, false);
             autoControlCooldownUntil = Time.time + 0.35f;
-            ShowMessage("幻影球员接管足球");
+            ShowMessage($"{GetTeamLabel(team)}幻影球员接管足球");
             return true;
         }
 
@@ -1092,12 +1308,13 @@ namespace KeepBallMoving
 
             Vector2 origin = activePhantomPlayer.Position;
             Vector2 releaseDirection = ball.ReleaseFromHolderPosition(phantomPlayerKickSpeed);
-            ApplyReleaseTalents(Team.Blue, origin, releaseDirection, phantomPlayerKickSpeed);
+            ApplyReleaseTalents(activePhantomPlayerTeam, origin, releaseDirection, phantomPlayerKickSpeed);
             DestroyActivePhantomPlayer();
             chargeTime = 0f;
-            blueHoldChargeArmed = false;
+            SetHoldChargeArmed(Team.Blue, false);
+            SetHoldChargeArmed(Team.Red, false);
             autoControlCooldownUntil = Time.time + 0.35f;
-            ShowMessage("幻影球员踢出足球");
+            ShowMessage($"{GetTeamLabel(activePhantomPlayerTeam)}幻影球员踢出足球");
         }
 
         private PlayerAgent FindKickoffPlayer(Team team)
@@ -1300,13 +1517,13 @@ namespace KeepBallMoving
 
         private bool CanPlayerCatchBall(PlayerAgent player, BallController targetBall)
         {
-            if (targetBall == null || targetBall.IsPhantom || player.Team != Team.Blue)
+            if (targetBall == null || targetBall.IsPhantom)
             {
                 return false;
             }
 
-            float hitDistance = player.BodyRadius + targetBall.Radius;
-            return Vector2.Distance(player.Position, targetBall.Position) <= hitDistance;
+            float controlDistance = GetEffectiveCatchRadius(player) + targetBall.Radius;
+            return Vector2.Distance(player.Position, targetBall.Position) <= controlDistance;
         }
 
         private bool CanPlayerInterceptPhantom(PlayerAgent player, BallController targetBall)
@@ -1316,8 +1533,8 @@ namespace KeepBallMoving
                 return false;
             }
 
-            float controlDistance = GetEffectiveCatchRadius(player) + targetBall.Radius;
-            return Vector2.Distance(player.Position, targetBall.Position) <= controlDistance;
+            float hitDistance = player.BodyRadius + targetBall.Radius;
+            return Vector2.Distance(player.Position, targetBall.Position) <= hitDistance;
         }
 
         private float GetEffectiveCatchRadius(PlayerAgent player)
@@ -1342,12 +1559,13 @@ namespace KeepBallMoving
             return 1f - GetRedDimensionSkill(skill);
         }
 
-        private PlayerAgent FindNearestCatchablePlayer()
+        private PlayerAgent FindNearestCatchablePlayer(Team team)
         {
             PlayerAgent nearest = null;
             float nearestDistance = float.MaxValue;
+            List<PlayerAgent> players = team == Team.Blue ? bluePlayers : redPlayers;
 
-            foreach (PlayerAgent player in bluePlayers)
+            foreach (PlayerAgent player in players)
             {
                 float distance = Vector2.Distance(player.Position, ball.Position);
                 if (CanPlayerCatchBall(player, ball) && distance < nearestDistance)
@@ -1393,7 +1611,8 @@ namespace KeepBallMoving
 
             foreach (PlayerAgent player in redPlayers)
             {
-                player.SetCatchHighlighted(ball.State == BallState.Free && CanRedAutoControlBall(player));
+                bool highlighted = ball.State == BallState.Free && (IsPvpMode() ? CanPlayerCatchBall(player, ball) : CanRedAutoControlBall(player));
+                player.SetCatchHighlighted(highlighted);
             }
         }
 
@@ -1468,7 +1687,7 @@ namespace KeepBallMoving
             {
                 PlayerAgent player = redPlayers[i];
                 Vector2 target = GetRedPressureTarget(player, i);
-                float moveSpeed = redMoveSpeed * Mathf.Lerp(0.65f, 1f, GetRedDimensionSkill(redMovementSkill));
+                float moveSpeed = IsPvpMode() ? redMoveSpeed : redMoveSpeed * Mathf.Lerp(0.65f, 1f, GetRedDimensionSkill(redMovementSkill));
                 MovePlayer(player, target, redPlayers, moveSpeed, deltaTime);
             }
         }
@@ -1716,7 +1935,23 @@ namespace KeepBallMoving
                 return;
             }
 
+            if (IsPhantomOwnGoal(side, scoringBall))
+            {
+                Team ownGoalOwner = scoringBall.PhantomOwner;
+                DestroyPhantomBall(scoringBall);
+                ShowMessage($"{GetTeamLabel(ownGoalOwner)}幻影足球进入自家球门，不计分");
+                return;
+            }
+
             goalLocked = true;
+            Vector2 goalFocusPosition = scoringBall != null ? scoringBall.Position : GetGoalFocusFallback(side);
+            if (scoringBall != null)
+            {
+                scoringBall.FreezeForGoalPresentation(goalFocusPosition);
+            }
+
+            string goalMessage;
+            Color goalColor;
 
             if (side == GoalSide.Right)
             {
@@ -1724,7 +1959,8 @@ namespace KeepBallMoving
                 nextKickoffTeam = Team.Red;
                 talentFirstPickTeam = Team.Blue;
                 talentSecondPickTeam = Team.Red;
-                ShowMessage("蓝方进球！红方开球");
+                goalMessage = "蓝方进球！";
+                goalColor = new Color(0.35f, 0.62f, 1f, 1f);
             }
             else
             {
@@ -1732,31 +1968,162 @@ namespace KeepBallMoving
                 nextKickoffTeam = Team.Blue;
                 talentFirstPickTeam = Team.Red;
                 talentSecondPickTeam = Team.Blue;
-                ShowMessage("红方进球！蓝方开球");
-            }
-
-            if (scoringBall != null && scoringBall.IsPhantom)
-            {
-                phantomBalls.Remove(scoringBall);
-                Destroy(scoringBall.gameObject);
+                goalMessage = "红方进球！";
+                goalColor = new Color(1f, 0.32f, 0.28f, 1f);
             }
 
             bluePhantomPlayerUsesRemaining = 0;
+            redPhantomPlayerUsesRemaining = 0;
             bluePhantomPlayerPassWindowActive = false;
+            redPhantomPlayerPassWindowActive = false;
             ClearKickoffLock();
             DestroyActivePhantomPlayer();
 
-            StartCoroutine(ShowTalentSelectionAfterGoal());
+            SpawnGoalEffect(goalFocusPosition);
+            StartCoroutine(PlayGoalSequence(goalFocusPosition, goalMessage, goalColor));
         }
 
-        private IEnumerator ShowTalentSelectionAfterGoal()
+        private Vector2 GetGoalFocusFallback(GoalSide side)
         {
-            yield return new WaitForSeconds(0.8f);
+            float x = side == GoalSide.Right ? fieldWidth * 0.5f + goalDepth * 0.5f : -fieldWidth * 0.5f - goalDepth * 0.5f;
+            return new Vector2(x, 0f);
+        }
+
+        private bool IsPhantomOwnGoal(GoalSide side, BallController scoringBall)
+        {
+            if (scoringBall == null || !scoringBall.IsPhantom)
+            {
+                return false;
+            }
+
+            return (scoringBall.PhantomOwner == Team.Blue && side == GoalSide.Left) ||
+                (scoringBall.PhantomOwner == Team.Red && side == GoalSide.Right);
+        }
+
+        private void DestroyPhantomBall(BallController phantom)
+        {
+            if (phantom == null)
+            {
+                return;
+            }
+
+            phantomBalls.Remove(phantom);
+            Destroy(phantom.gameObject);
+        }
+
+        private void SpawnGoalEffect(Vector2 position)
+        {
+            if (goalEffectPrefab == null)
+            {
+                return;
+            }
+
+            GameObject effect = Instantiate(goalEffectPrefab, new Vector3(position.x, position.y, 0f), Quaternion.identity, transform);
+            ParticleSystem[] particleSystems = effect.GetComponentsInChildren<ParticleSystem>();
+            for (int i = 0; i < particleSystems.Length; i++)
+            {
+                particleSystems[i].Play(true);
+            }
+
+            StartCoroutine(DestroyGoalEffectAfterLifetime(effect));
+        }
+
+        private IEnumerator DestroyGoalEffectAfterLifetime(GameObject effect)
+        {
+            yield return new WaitForSecondsRealtime(Mathf.Max(0.05f, goalEffectLifetime));
+
+            if (effect != null)
+            {
+                Destroy(effect);
+            }
+        }
+
+        private IEnumerator PlayGoalSequence(Vector2 focusPosition, string goalMessage, Color goalColor)
+        {
+            Camera cameraToAnimate = gameplayCamera != null ? gameplayCamera : Camera.main;
+            Vector3 startPosition = cameraToAnimate != null ? cameraToAnimate.transform.position : defaultCameraPosition;
+            float startSize = cameraToAnimate != null ? cameraToAnimate.orthographicSize : defaultCameraOrthographicSize;
+            Vector3 focusCameraPosition = new Vector3(focusPosition.x, focusPosition.y, defaultCameraPosition.z);
+
+            Time.timeScale = Mathf.Clamp(goalSlowTimeScale, 0.05f, 1f);
+            Time.fixedDeltaTime = defaultFixedDeltaTime * Time.timeScale;
+
+            if (cameraToAnimate != null)
+            {
+                yield return AnimateCamera(cameraToAnimate, startPosition, focusCameraPosition, startSize, goalZoomOrthographicSize, goalCameraMoveDuration);
+            }
+
+            goalBannerText = goalMessage;
+            goalBannerColor = goalColor;
+            goalBannerUntilRealtime = Time.unscaledTime + goalDisplayDuration;
+            ShowMessage(goalMessage);
+
+            yield return new WaitForSecondsRealtime(goalDisplayDuration);
+
+            RestoreGoalTimeScale();
+
+            if (cameraToAnimate != null)
+            {
+                yield return AnimateCamera(cameraToAnimate, cameraToAnimate.transform.position, defaultCameraPosition, cameraToAnimate.orthographicSize, defaultCameraOrthographicSize, goalCameraReturnDuration);
+            }
+
+            goalBannerText = string.Empty;
+            ShowTalentSelectionAfterGoalPresentation();
+        }
+
+        private IEnumerator AnimateCamera(Camera targetCamera, Vector3 fromPosition, Vector3 toPosition, float fromSize, float toSize, float duration)
+        {
+            float safeDuration = Mathf.Max(0.01f, duration);
+            float elapsed = 0f;
+
+            while (elapsed < safeDuration)
+            {
+                elapsed += Time.unscaledDeltaTime;
+                float t = Mathf.Clamp01(elapsed / safeDuration);
+                float eased = 1f - Mathf.Pow(1f - t, 3f);
+                targetCamera.transform.position = Vector3.Lerp(fromPosition, toPosition, eased);
+                targetCamera.orthographicSize = Mathf.Lerp(fromSize, toSize, eased);
+                yield return null;
+            }
+
+            targetCamera.transform.position = toPosition;
+            targetCamera.orthographicSize = toSize;
+        }
+
+        private void RestoreGoalPresentationState()
+        {
+            RestoreGoalTimeScale();
+            goalBannerText = string.Empty;
+
+            Camera cameraToRestore = gameplayCamera != null ? gameplayCamera : Camera.main;
+            if (cameraToRestore == null)
+            {
+                return;
+            }
+
+            cameraToRestore.transform.position = defaultCameraPosition;
+            cameraToRestore.orthographicSize = defaultCameraOrthographicSize;
+        }
+
+        private void RestoreGoalTimeScale()
+        {
+            Time.timeScale = 1f;
+            Time.fixedDeltaTime = defaultFixedDeltaTime > 0f ? defaultFixedDeltaTime : 0.02f;
+        }
+
+        private void ShowTalentSelectionAfterGoalPresentation()
+        {
             currentTalentPickingTeam = talentFirstPickTeam;
             talentSecondPickPending = false;
             GenerateTalentChoices();
             talentSelectionOpen = true;
             ShowMessage($"{GetTeamLabel(currentTalentPickingTeam)}先选择天赋");
+        }
+
+        private IEnumerator ShowTalentSelectionAfterGoal()
+        {
+            yield return new WaitForSeconds(0.8f);
+            ShowTalentSelectionAfterGoalPresentation();
         }
 
         private void GenerateTalentChoices()
@@ -2354,9 +2721,66 @@ namespace KeepBallMoving
             return team == Team.Blue ? "蓝方" : "红方";
         }
 
+        private bool IsHoldChargeArmed(Team team)
+        {
+            return team == Team.Blue ? blueHoldChargeArmed : redHoldChargeArmed;
+        }
+
+        private void SetHoldChargeArmed(Team team, bool armed)
+        {
+            if (team == Team.Blue)
+            {
+                blueHoldChargeArmed = armed;
+            }
+            else
+            {
+                redHoldChargeArmed = armed;
+            }
+        }
+
+        private int GetPhantomPlayerUsesRemaining(Team team)
+        {
+            return team == Team.Blue ? bluePhantomPlayerUsesRemaining : redPhantomPlayerUsesRemaining;
+        }
+
+        private void SetPhantomPlayerUsesRemaining(Team team, int uses)
+        {
+            if (team == Team.Blue)
+            {
+                bluePhantomPlayerUsesRemaining = uses;
+            }
+            else
+            {
+                redPhantomPlayerUsesRemaining = uses;
+            }
+        }
+
+        private bool IsPhantomPlayerPassWindowActive(Team team)
+        {
+            return team == Team.Blue ? bluePhantomPlayerPassWindowActive : redPhantomPlayerPassWindowActive;
+        }
+
+        private void SetPhantomPlayerPassWindowActive(Team team, bool active)
+        {
+            if (team == Team.Blue)
+            {
+                bluePhantomPlayerPassWindowActive = active;
+            }
+            else
+            {
+                redPhantomPlayerPassWindowActive = active;
+            }
+        }
+
+        private Color GetPhantomPlayerColor(Team team)
+        {
+            return team == Team.Blue ? phantomPlayerColor : new Color(1f, 0.38f, 0.34f, phantomPlayerColor.a);
+        }
+
         private void OnGUI()
         {
             DrawScoreboard();
+            DrawGoalBanner();
 
             GUIStyle style = new GUIStyle(GUI.skin.box)
             {
@@ -2365,22 +2789,50 @@ namespace KeepBallMoving
                 normal = { textColor = Color.white }
             };
 
-            string message = Time.time <= messageUntil ? messageText : "空格/A 抓球和蓄力，Z/B 召唤幻影球员，R 重置，N 重新开始";
+            string defaultMessage = IsPvpMode()
+                ? "蓝方：空格/Z/手柄1A-B；红方：Enter或右Ctrl/右Shift或/手柄2A-B；M 切 PVE"
+                : "空格/手柄1A 抓球和蓄力，Z/手柄1B 召唤幻影球员，M 切 PVP，R 重置，N 重新开始";
+            string message = Time.time <= messageUntil ? messageText : defaultMessage;
             float charge01 = Mathf.Clamp01(chargeTime / maxChargeTime);
             string text =
                 $"《别让球停下来》Unity 基础原型\n" +
+                $"模式：{GetMatchModeLabel()}\n" +
                 $"蓝方 {blueScore} : {redScore} 红方\n" +
                 $"状态：{stateText}\n" +
                 $"蓄力：{charge01:P0}\n" +
                 $"球速：{ball.Velocity.magnitude:0.0}\n" +
                 $"{message}";
 
-            GUI.Box(new Rect(16f, 86f, 420f, 166f), text, style);
+            GUI.Box(new Rect(16f, 86f, 460f, 188f), text, style);
 
             if (talentSelectionOpen)
             {
                 DrawTalentSelection();
             }
+        }
+
+        private void DrawGoalBanner()
+        {
+            if (string.IsNullOrEmpty(goalBannerText) || Time.unscaledTime > goalBannerUntilRealtime)
+            {
+                return;
+            }
+
+            float width = Mathf.Min(620f, Screen.width - 48f);
+            float height = 96f;
+            Rect bannerRect = new Rect((Screen.width - width) * 0.5f, Screen.height * 0.22f, width, height);
+            DrawFilledRect(bannerRect, new Color(0.02f, 0.025f, 0.03f, 0.72f));
+            DrawBorder(bannerRect, goalBannerColor, 5f);
+
+            GUIStyle bannerStyle = new GUIStyle(GUI.skin.label)
+            {
+                alignment = TextAnchor.MiddleCenter,
+                fontSize = 42,
+                fontStyle = FontStyle.Bold,
+                normal = { textColor = goalBannerColor }
+            };
+
+            GUI.Label(bannerRect, goalBannerText, bannerStyle);
         }
 
         private void DrawScoreboard()
@@ -2392,10 +2844,10 @@ namespace KeepBallMoving
                 normal = { textColor = Color.white }
             };
 
-            float width = 420f;
+            float width = 520f;
             float height = 58f;
             Rect rect = new Rect((Screen.width - width) * 0.5f, 14f, width, height);
-            string text = $"蓝方 {blueScore}  -  {redScore} 红方\n下一轮：{GetTeamLabel(nextKickoffTeam)}开球";
+            string text = $"蓝方 {blueScore}  -  {redScore} 红方\n模式：{GetMatchModeLabel()} / 下一轮：{GetTeamLabel(nextKickoffTeam)}开球";
             GUI.Box(rect, text, scoreStyle);
         }
 
@@ -2427,7 +2879,10 @@ namespace KeepBallMoving
                 ? $"{GetTeamLabel(currentTalentPickingTeam)}只能从剩余天赋中选择。上次：蓝方 {lastBlueTalentText} / 红方 {lastRedTalentText}"
                 : $"进球方先选，失球方后选剩余天赋。上次：蓝方 {lastBlueTalentText} / 红方 {lastRedTalentText}";
             GUI.Label(new Rect(0f, 122f, Screen.width, 24f), orderText, infoStyle);
-            GUI.Label(new Rect(0f, 146f, Screen.width, 22f), "手柄：左右摇杆选择，A 确认；鼠标点击选择", infoStyle);
+            string talentInputHint = currentTalentPickingTeam == Team.Blue
+                ? "蓝方：手柄1左右选择，手柄1A确认；键盘方向键/鼠标也可选择"
+                : "红方：手柄2左右选择，手柄2A确认；键盘方向键/鼠标也可选择";
+            GUI.Label(new Rect(0f, 146f, Screen.width, 22f), talentInputHint, infoStyle);
 
             float cardWidth = 240f;
             float cardHeight = 380f;
@@ -2503,7 +2958,8 @@ namespace KeepBallMoving
                 normal = { textColor = new Color(0.78f, 0.84f, 0.95f, 1f) }
             };
 
-            string actionText = taken ? "已被选择" : selectable ? selected ? "A 确认 / 点击选择" : "摇杆左右切换" : "已满";
+            string confirmText = viewingTeam == Team.Blue ? "手柄1A确认 / 点击选择" : "手柄2A确认 / 点击选择";
+            string actionText = taken ? "已被选择" : selectable ? selected ? confirmText : "摇杆左右切换" : "已满";
             GUI.Label(new Rect(cardRect.x + 16f, cardRect.yMax - 36f, cardRect.width - 32f, 22f), actionText, chooseStyle);
 
             if (!selectable)

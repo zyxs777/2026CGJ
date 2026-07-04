@@ -254,6 +254,24 @@ namespace KeepBallMoving
             lastFreeDirection = direction.normalized;
         }
 
+        public void FreezeForGoalPresentation(Vector2 position)
+        {
+            State = BallState.Free;
+            holder = null;
+            curveRemainingTime = 0f;
+            transform.position = position;
+
+            if (body == null)
+            {
+                body = GetComponent<Rigidbody2D>();
+            }
+
+            body.bodyType = RigidbodyType2D.Kinematic;
+            body.position = position;
+            body.velocity = Vector2.zero;
+            body.angularVelocity = 0f;
+        }
+
         public void ApplyCurve(float strength, float duration, float sign)
         {
             curveStrength = strength;
