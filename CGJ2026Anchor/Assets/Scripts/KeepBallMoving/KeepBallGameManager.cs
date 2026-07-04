@@ -28,6 +28,9 @@ namespace KeepBallMoving
         [SerializeField] private float goalDepth = 1f;
         [SerializeField] private float goalHeight = 4.5f;
 
+        [Header("UI")]
+        [SerializeField] private KeepBallScoreboard scoreboardPrefab;
+
         [Header("Actors")]
         [SerializeField] private int playersPerTeam = 5;
         [SerializeField] private float playerRadius = 0.5f;
@@ -153,6 +156,7 @@ namespace KeepBallMoving
         private Sprite holdPointSprite;
         private Sprite ballSprite;
         private Sprite centerRingSprite;
+        private KeepBallScoreboard scoreboardUi;
         private Canvas talentCanvas;
         private RectTransform blueTalentPanel;
         private RectTransform redTalentPanel;
@@ -217,6 +221,7 @@ namespace KeepBallMoving
         private const string DefaultBlueHoldRangePrefabPath = "KeepBallMoving/HoldRangeBlue";
         private const string DefaultRedHoldRangePrefabPath = "KeepBallMoving/HoldRangeRed";
         private const string DefaultTalentBadgePrefabPath = "KeepBallMoving/KeepBallTalentBadge";
+        private const string DefaultScoreboardPrefabPath = "KeepBallMoving/KeepBallScoreboard";
         private const string DefaultGoalEffectPrefabPath = "KeepBallMoving/GoalEffect";
         private const string DefaultFieldVisualPrefabPath = "KeepBallMoving/KeepBallField";
         private const string DefaultFieldSpritePath = "KeepBallMoving/BG2";
@@ -266,6 +271,7 @@ namespace KeepBallMoving
             SpawnPlayers();
             SpawnBall();
             SetupTalentUi();
+            SetupScoreboardUi();
             ResetRound();
         }
 
@@ -275,6 +281,8 @@ namespace KeepBallMoving
             {
                 return;
             }
+
+            UpdateScoreboardUi();
 
             if (talentSelectionOpen)
             {
@@ -810,6 +818,11 @@ namespace KeepBallMoving
                 talentBadgePrefab = Resources.Load<KeepBallTalentBadge>(DefaultTalentBadgePrefabPath);
             }
 
+            if (scoreboardPrefab == null)
+            {
+                scoreboardPrefab = Resources.Load<KeepBallScoreboard>(DefaultScoreboardPrefabPath);
+            }
+
             if (goalEffectPrefab == null)
             {
                 goalEffectPrefab = Resources.Load<GameObject>(DefaultGoalEffectPrefabPath);
@@ -825,6 +838,7 @@ namespace KeepBallMoving
                 string spritePath = string.IsNullOrWhiteSpace(fieldSpriteResourcePath) ? DefaultFieldSpritePath : fieldSpriteResourcePath;
                 fieldSprite = Resources.Load<Sprite>(spritePath);
             }
+
         }
 
         private void SetupCamera()
@@ -1178,6 +1192,50 @@ namespace KeepBallMoving
             blueTalentPanel = CreateTalentPanel("BlueTalentPanel", new Vector2(0f, 0f), new Vector2(0f, 0f), new Vector2(18f, 18f));
             redTalentPanel = CreateTalentPanel("RedTalentPanel", new Vector2(1f, 0f), new Vector2(1f, 0f), new Vector2(-18f, 18f));
             UpdateTalentUi();
+        }
+
+        private void SetupScoreboardUi()
+        {
+            if (scoreboardUi != null)
+            {
+                UpdateScoreboardUi();
+                return;
+            }
+
+            if (talentCanvas == null)
+            {
+                SetupTalentUi();
+            }
+
+            if (scoreboardPrefab != null)
+            {
+                scoreboardUi = Instantiate(scoreboardPrefab, talentCanvas.transform);
+            }
+            else
+            {
+                GameObject scoreboardObject = new GameObject("KeepBallScoreboard", typeof(RectTransform));
+                scoreboardObject.transform.SetParent(talentCanvas.transform, false);
+                scoreboardUi = scoreboardObject.AddComponent<KeepBallScoreboard>();
+            }
+
+            RectTransform rectTransform = scoreboardUi.RectTransform;
+            rectTransform.SetParent(talentCanvas.transform, false);
+            rectTransform.anchorMin = new Vector2(0.5f, 1f);
+            rectTransform.anchorMax = new Vector2(0.5f, 1f);
+            rectTransform.pivot = new Vector2(0.5f, 1f);
+            rectTransform.anchoredPosition = new Vector2(0f, -8f);
+            rectTransform.SetAsFirstSibling();
+            UpdateScoreboardUi();
+        }
+
+        private void UpdateScoreboardUi()
+        {
+            if (scoreboardUi == null)
+            {
+                return;
+            }
+
+            scoreboardUi.SetScore(blueScore, redScore, Mathf.Max(1, scoreToWin), GetMatchModeLabel(), GetTeamLabel(nextKickoffTeam));
         }
 
         private RectTransform CreateTalentPanel(string panelName, Vector2 anchor, Vector2 pivot, Vector2 anchoredPosition)
@@ -3408,7 +3466,6 @@ namespace KeepBallMoving
 
         private void OnGUI()
         {
-            DrawScoreboard();
             DrawGoalBanner();
 
             GUIStyle style = new GUIStyle(GUI.skin.box)
@@ -3543,22 +3600,6 @@ namespace KeepBallMoving
             {
                 ConfirmVictoryRestart();
             }
-        }
-
-        private void DrawScoreboard()
-        {
-            GUIStyle scoreStyle = new GUIStyle(GUI.skin.box)
-            {
-                alignment = TextAnchor.MiddleCenter,
-                fontSize = 24,
-                normal = { textColor = Color.white }
-            };
-
-            float width = 520f;
-            float height = 58f;
-            Rect rect = new Rect((Screen.width - width) * 0.5f, 14f, width, height);
-            string text = $"蓝方 {blueScore}  -  {redScore} 红方\n目标：先到 {Mathf.Max(1, scoreToWin)} 球 / 模式：{GetMatchModeLabel()} / 下一轮：{GetTeamLabel(nextKickoffTeam)}开球";
-            GUI.Box(rect, text, scoreStyle);
         }
 
         private void DrawTalentSelection()

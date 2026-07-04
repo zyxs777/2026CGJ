@@ -425,7 +425,7 @@ PVP 模式下，红方 AI 自动接球和自动出球不会执行，但红方球
 
 ### 4.7 比分和足球规则
 
-上方 UI 显示蓝红比分。
+上方 Unity UI 显示蓝红比分。默认会实例化 `Assets/Resources/KeepBallMoving/KeepBallScoreboard.prefab`，这个记分板预制体内部使用 `Assets/Resources/KeepBallMoving/point.png` 作为底图，方便在 Prefab 里手动调整图片、文字和布局。
 
 胜利规则：
 
@@ -792,7 +792,16 @@ blueHoldRangePrefab
 redHoldRangePrefab
 talentBadgePrefab
 goalEffectPrefab
+scoreboardPrefab
 ```
+
+### 6.10 记分板 UI 预制体
+
+```csharp
+scoreboardPrefab
+```
+
+`scoreboardPrefab` 默认从 `KeepBallMoving/KeepBallScoreboard` 加载，对应 `Assets/Resources/KeepBallMoving/KeepBallScoreboard.prefab`。这个 prefab 挂载 `KeepBallScoreboard`，会显示比分、目标分数、当前模式和下一轮开球方。
 
 ## 7. 当前验证方式
 
