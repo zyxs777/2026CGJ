@@ -80,11 +80,14 @@ namespace KeepBallMoving
 
         [Header("Stamina")]
         [SerializeField] private float staminaRecoveryPerSecond = 35f;
-        [SerializeField] private float movementStaminaDrainPerSecond = 6f;
+        [SerializeField] private float movementStaminaDrainPerSecond = 3f;
         [SerializeField] private float dribbleStaminaDrainPerSecond = 8f;
         [SerializeField] private float passChargeStaminaDrainPerSecond = 12f;
         [SerializeField] private float passReleaseStaminaCost = 8f;
+        [SerializeField] private float staminaExhaustedReleaseSpeed = 10f;
         [SerializeField] private float exhaustedMoveSpeedMultiplier;
+        [SerializeField] private float skyGiantSizeMultiplier = 2f;
+        [SerializeField] private float skyGiantMoveSpeedMultiplier = 0.45f;
 
         [Header("Red AI Difficulty")]
         [SerializeField, Range(0f, 1f)] private float redAiStrength = 0.6f;
@@ -180,6 +183,8 @@ namespace KeepBallMoving
         private bool redPhantomPlayerPassWindowActive;
         private PlayerAgent activePhantomPlayer;
         private Team activePhantomPlayerTeam = Team.Blue;
+        private PlayerAgent blueSkyGiantPlayer;
+        private PlayerAgent redSkyGiantPlayer;
         private PlayerAgent lockedKickoffPlayer;
         private bool kickoffPlayerLocked;
         private Vector2 lockedKickoffPosition;
@@ -219,7 +224,7 @@ namespace KeepBallMoving
         private const float TalentBadgeHeight = 44f;
         private const float TalentBadgeGap = 6f;
         private const int TalentChoiceCount = 3;
-        private const int TalentTypeCount = 10;
+        private const int TalentTypeCount = 11;
 
         private enum MatchMode
         {
@@ -238,7 +243,8 @@ namespace KeepBallMoving
             ShieldField,
             PassField,
             PhantomPlayer,
-            DirectionalControl
+            DirectionalControl,
+            SkyGiant
         }
 
         private struct TalentOption
@@ -322,6 +328,11 @@ namespace KeepBallMoving
 
                 if (activePhantomPlayer != null && ball.Holder == activePhantomPlayer)
                 {
+                    if (TickHolderStamina(activePhantomPlayer, false, Time.deltaTime))
+                    {
+                        return;
+                    }
+
                     stateText = $"{GetTeamLabel(activePhantomPlayerTeam)}幻影球员控球：按{GetPrimaryActionHint(activePhantomPlayerTeam)}踢出";
 
                     if (IsPrimaryActionDown(activePhantomPlayerTeam))
@@ -471,7 +482,10 @@ namespace KeepBallMoving
         private void HandlePlayerHeldBall(Team team, float deltaTime)
         {
             PlayerAgent holder = ball.Holder;
-            TickHolderStamina(holder, IsHoldChargeArmed(team), deltaTime);
+            if (TickHolderStamina(holder, IsHoldChargeArmed(team), deltaTime))
+            {
+                return;
+            }
 
             if (!IsHoldChargeArmed(team))
             {
@@ -499,7 +513,10 @@ namespace KeepBallMoving
         private void HandleRedAiHeldBall(float deltaTime)
         {
             PlayerAgent holder = ball.Holder;
-            TickHolderStamina(holder, true, deltaTime);
+            if (TickHolderStamina(holder, true, deltaTime))
+            {
+                return;
+            }
 
             chargeTime += deltaTime;
             float holdDelay = Mathf.Max(0.05f, redCurrentHoldDelay);
@@ -1309,8 +1326,11 @@ namespace KeepBallMoving
             ClearPhantomBalls();
             ClearKickoffLock();
 
+            ClearSkyGiants();
             ResetTeamToFormation(Team.Blue);
             ResetTeamToFormation(Team.Red);
+            ApplySkyGiantForRound(Team.Blue);
+            ApplySkyGiantForRound(Team.Red);
 
             PlayerAgent kickoffPlayer = FindKickoffPlayer(nextKickoffTeam);
             if (kickoffPlayer != null)
@@ -1729,7 +1749,7 @@ namespace KeepBallMoving
 
         private float GetEffectiveCatchRadius(PlayerAgent player)
         {
-            return player.CatchRadius * GetBigfootForwardMultiplier(player);
+            return player.CatchRadius * GetControlRangeMultiplier(player);
         }
 
         private float GetBigfootForwardMultiplier(PlayerAgent player)
@@ -1753,13 +1773,14 @@ namespace KeepBallMoving
             return 1f - GetRedDimensionSkill(skill);
         }
 
-        private void TickHolderStamina(PlayerAgent holder, bool chargingPass, float deltaTime)
+        private bool TickHolderStamina(PlayerAgent holder, bool chargingPass, float deltaTime)
         {
             if (holder == null)
             {
-                return;
+                return false;
             }
 
+            bool wasExhausted = holder.IsStaminaExhausted;
             float drain = dribbleStaminaDrainPerSecond;
             if (chargingPass)
             {
@@ -1767,6 +1788,42 @@ namespace KeepBallMoving
             }
 
             holder.TickStamina(deltaTime, drain, staminaRecoveryPerSecond);
+            if (!wasExhausted && holder.IsStaminaExhausted && ball != null && ball.State == BallState.Held && ball.Holder == holder)
+            {
+                ReleaseHeldBallOnStaminaExhausted(holder);
+                return true;
+            }
+
+            return false;
+        }
+
+        private void ReleaseHeldBallOnStaminaExhausted(PlayerAgent holder)
+        {
+            Team releaseTeam = holder.Team;
+            float releaseSpeed = Mathf.Max(minReleaseSpeed, staminaExhaustedReleaseSpeed) * GetDirectionalControlReleaseMultiplier(releaseTeam);
+            Vector2 releaseDirection = holder == activePhantomPlayer
+                ? ball.ReleaseFromHolderPosition(releaseSpeed)
+                : ball.Release(releaseSpeed);
+            Vector2 origin = ball.Position;
+
+            ClearKickoffLockIfHolder(holder);
+            ApplyReleaseTalents(releaseTeam, origin, releaseDirection, releaseSpeed);
+            SetPhantomPlayerPassWindowActive(Team.Blue, false);
+            SetPhantomPlayerPassWindowActive(Team.Red, false);
+            if (holder == activePhantomPlayer)
+            {
+                DestroyActivePhantomPlayer();
+            }
+            else if (GetPhantomPlayerUsesRemaining(releaseTeam) > 0 && HasTalent(releaseTeam, TalentId.PhantomPlayer))
+            {
+                SetPhantomPlayerPassWindowActive(releaseTeam, true);
+            }
+
+            chargeTime = 0f;
+            SetHoldChargeArmed(Team.Blue, false);
+            SetHoldChargeArmed(Team.Red, false);
+            autoControlCooldownUntil = Time.time + 0.35f;
+            ShowMessage($"{GetTeamLabel(releaseTeam)}体力耗尽，强制出球");
         }
 
         private void UpdateHeldBallMotion()
@@ -2102,6 +2159,11 @@ namespace KeepBallMoving
             if (ball.State == BallState.Held && ball.Holder == player)
             {
                 speed *= holderMoveSpeedMultiplier;
+            }
+
+            if (IsSkyGiant(player))
+            {
+                speed *= Mathf.Max(0f, skyGiantMoveSpeedMultiplier);
             }
 
             if (player.IsStaminaExhausted)
@@ -2558,7 +2620,8 @@ namespace KeepBallMoving
                 TalentId.ShieldField,
                 TalentId.PassField,
                 TalentId.PhantomPlayer,
-                TalentId.DirectionalControl
+                TalentId.DirectionalControl,
+                TalentId.SkyGiant
             };
             List<TalentId> availablePool = new List<TalentId>();
             foreach (TalentId talentId in pool)
@@ -2665,6 +2728,14 @@ namespace KeepBallMoving
                         Name = "变向控球",
                         Description = "接球后可用 A/D、左右方向键或左摇杆左右改变足球绕行方向。每层提高持球球速和出球速度，最多 3 层。",
                         AccentColor = new Color(1f, 0.42f, 0.72f, 1f)
+                    };
+                case TalentId.SkyGiant:
+                    return new TalentOption
+                    {
+                        Id = id,
+                        Name = "天降巨人",
+                        Description = "每轮开局随机一个己方球员变得巨大，但移动速度明显降低。最多 1 层。",
+                        AccentColor = new Color(1f, 0.78f, 0.28f, 1f)
                     };
                 default:
                     return new TalentOption
@@ -3019,6 +3090,7 @@ namespace KeepBallMoving
 
         private void ClearExtraPlayers()
         {
+            ClearSkyGiants();
             for (int i = extraPlayers.Count - 1; i >= 0; i--)
             {
                 PlayerAgent player = extraPlayers[i];
@@ -3047,6 +3119,52 @@ namespace KeepBallMoving
             UpdateTalentUi();
         }
 
+        private void ClearSkyGiants()
+        {
+            blueSkyGiantPlayer = null;
+            redSkyGiantPlayer = null;
+            SyncAllControlRangeVisuals();
+        }
+
+        private void ApplySkyGiantForRound(Team team)
+        {
+            if (!HasTalent(team, TalentId.SkyGiant))
+            {
+                SetSkyGiantPlayer(team, null);
+                return;
+            }
+
+            List<PlayerAgent> players = team == Team.Blue ? bluePlayers : redPlayers;
+            if (players.Count == 0)
+            {
+                SetSkyGiantPlayer(team, null);
+                return;
+            }
+
+            PlayerAgent chosen = players[Random.Range(0, players.Count)];
+            SetSkyGiantPlayer(team, chosen);
+            ShowMessage($"{GetTeamLabel(team)}天降巨人：{chosen.name}");
+        }
+
+        private void SetSkyGiantPlayer(Team team, PlayerAgent player)
+        {
+            if (team == Team.Blue)
+            {
+                blueSkyGiantPlayer = player;
+            }
+            else
+            {
+                redSkyGiantPlayer = player;
+            }
+
+            SyncTeamControlRangeVisuals(team);
+        }
+
+        private bool IsSkyGiant(PlayerAgent player)
+        {
+            return player != null && (player == blueSkyGiantPlayer || player == redSkyGiantPlayer);
+        }
+
         private bool HasTalent(Team team, TalentId talentId)
         {
             return GetTalentCount(team, talentId) > 0;
@@ -3070,6 +3188,7 @@ namespace KeepBallMoving
                 case TalentId.ExtraForward:
                 case TalentId.ExtraMidfielder:
                 case TalentId.ExtraDefender:
+                case TalentId.SkyGiant:
                     return 1;
                 case TalentId.PhantomPlayer:
                     return 1;
@@ -3110,9 +3229,23 @@ namespace KeepBallMoving
                 return;
             }
 
-            float multiplier = GetBigfootForwardMultiplier(player);
-            player.SetControlRangeMultiplier(multiplier);
-            player.SetBodyRadiusMultiplier(multiplier);
+            player.SetControlRangeMultiplier(GetControlRangeMultiplier(player));
+            player.SetBodyRadiusMultiplier(GetBodyRadiusMultiplier(player));
+        }
+
+        private float GetSkyGiantSizeMultiplier(PlayerAgent player)
+        {
+            return IsSkyGiant(player) ? Mathf.Max(0.01f, skyGiantSizeMultiplier) : 1f;
+        }
+
+        private float GetControlRangeMultiplier(PlayerAgent player)
+        {
+            return GetBigfootForwardMultiplier(player) * GetSkyGiantSizeMultiplier(player);
+        }
+
+        private float GetBodyRadiusMultiplier(PlayerAgent player)
+        {
+            return GetBigfootForwardMultiplier(player) * GetSkyGiantSizeMultiplier(player);
         }
 
         private string GetTalentSummary(Team team)
@@ -3160,6 +3293,8 @@ namespace KeepBallMoving
                     return "幻影球员";
                 case TalentId.DirectionalControl:
                     return "变向控球";
+                case TalentId.SkyGiant:
+                    return "天降巨人";
                 default:
                     return "香蕉球";
             }
@@ -3187,6 +3322,8 @@ namespace KeepBallMoving
                     return new Color(0.42f, 0.92f, 1f, 1f);
                 case TalentId.DirectionalControl:
                     return new Color(1f, 0.42f, 0.72f, 1f);
+                case TalentId.SkyGiant:
+                    return new Color(1f, 0.78f, 0.28f, 1f);
                 default:
                     return new Color(1f, 0.9f, 0.2f, 1f);
             }
@@ -3598,6 +3735,15 @@ namespace KeepBallMoving
                     DrawFilledRect(new Rect(iconRect.x + 42f, iconRect.center.y - 18f, 8f, 36f), new Color(1f, 1f, 1f, 0.8f));
                     DrawFilledRect(new Rect(iconRect.xMax - 78f, iconRect.center.y - 4f, 36f, 8f), new Color(1f, 1f, 1f, 0.8f));
                     DrawFilledRect(new Rect(iconRect.xMax - 50f, iconRect.center.y - 18f, 8f, 36f), new Color(1f, 1f, 1f, 0.8f));
+                    break;
+                case TalentId.SkyGiant:
+                    DrawFilledRect(new Rect(iconRect.center.x - 28f, iconRect.y + 30f, 56f, 56f), option.AccentColor);
+                    DrawFilledRect(new Rect(iconRect.center.x - 42f, iconRect.y + 88f, 84f, 54f), new Color(option.AccentColor.r, option.AccentColor.g, option.AccentColor.b, 0.82f));
+                    DrawFilledRect(new Rect(iconRect.center.x - 68f, iconRect.y + 98f, 26f, 50f), option.AccentColor);
+                    DrawFilledRect(new Rect(iconRect.center.x + 42f, iconRect.y + 98f, 26f, 50f), option.AccentColor);
+                    DrawFilledRect(new Rect(iconRect.center.x - 34f, iconRect.yMax - 42f, 22f, 34f), option.AccentColor);
+                    DrawFilledRect(new Rect(iconRect.center.x + 12f, iconRect.yMax - 42f, 22f, 34f), option.AccentColor);
+                    DrawFilledRect(new Rect(iconRect.x + 34f, iconRect.y + 20f, iconRect.width - 68f, 5f), new Color(1f, 1f, 1f, 0.42f));
                     break;
                 default:
                     for (int i = 0; i < 6; i++)
