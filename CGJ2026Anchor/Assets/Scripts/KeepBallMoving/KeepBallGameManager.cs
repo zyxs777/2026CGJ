@@ -94,8 +94,10 @@ namespace KeepBallMoving
         [SerializeField] private float shieldFieldPushDistance = 5f;
         [SerializeField] private float passFieldRadius = 2.8f;
         [SerializeField] private float passFieldPushDistance = 1.8f;
+        [SerializeField] private float fieldRadiusBonusPerStack = 0.25f;
         [SerializeField] private float shockwavePushDuration = 0.18f;
         [SerializeField] private float shockwaveEffectDuration = 0.35f;
+        [SerializeField] private float shockwaveEffectPrefabRadius = 3f;
         [SerializeField] private float phantomPlayerKickSpeed = 15f;
         [SerializeField] private float phantomPlayerHoldAngularSpeed = 420f;
         [SerializeField] private Color phantomPlayerColor = new Color(0.42f, 0.92f, 1f, 0.78f);
@@ -2360,7 +2362,7 @@ namespace KeepBallMoving
                     {
                         Id = id,
                         Name = "护球立场",
-                        Description = "己方接球时产生圆形震荡波，推开周围敌方球员。最多 3 层，击退效果保持当前叠加方式。",
+                        Description = "己方接球时产生圆形震荡波，推开周围敌方球员。最多 3 层，每层都会提高范围和击退距离。",
                         AccentColor = new Color(0.25f, 1f, 0.86f, 1f)
                     };
                 case TalentId.PassField:
@@ -2368,7 +2370,7 @@ namespace KeepBallMoving
                     {
                         Id = id,
                         Name = "传球立场",
-                        Description = "己方传球时产生圆形震荡波，推开周围敌方球员。最多 3 层，击退效果保持当前叠加方式。",
+                        Description = "己方传球时产生圆形震荡波，推开周围敌方球员。最多 3 层，每层都会提高范围和击退距离。",
                         AccentColor = new Color(0.78f, 0.45f, 1f, 1f)
                     };
                 case TalentId.PhantomPlayer:
@@ -2502,7 +2504,12 @@ namespace KeepBallMoving
             if (HasTalent(team, TalentId.PassField))
             {
                 int passFieldCount = GetTalentCount(team, TalentId.PassField);
-                TriggerShockwave(team, origin, passFieldRadius, passFieldPushDistance * Mathf.Max(1, passFieldCount), GetTalentColor(TalentId.PassField));
+                TriggerShockwave(
+                    team,
+                    origin,
+                    GetStackedFieldRadius(passFieldRadius, passFieldCount),
+                    passFieldPushDistance * Mathf.Max(1, passFieldCount),
+                    GetTalentColor(TalentId.PassField));
             }
 
             if (HasTalent(team, TalentId.PhantomFootball))
@@ -2526,7 +2533,18 @@ namespace KeepBallMoving
             }
 
             int shieldFieldCount = GetTalentCount(team, TalentId.ShieldField);
-            TriggerShockwave(team, center, shieldFieldRadius, shieldFieldPushDistance * Mathf.Max(1, shieldFieldCount), GetTalentColor(TalentId.ShieldField));
+            TriggerShockwave(
+                team,
+                center,
+                GetStackedFieldRadius(shieldFieldRadius, shieldFieldCount),
+                shieldFieldPushDistance * Mathf.Max(1, shieldFieldCount),
+                GetTalentColor(TalentId.ShieldField));
+        }
+
+        private float GetStackedFieldRadius(float baseRadius, int stackCount)
+        {
+            int safeCount = Mathf.Max(1, stackCount);
+            return baseRadius * (1f + Mathf.Max(0f, fieldRadiusBonusPerStack) * (safeCount - 1));
         }
 
         private void TriggerShockwave(Team owner, Vector2 center, float radius, float pushDistance, Color color)
@@ -2575,6 +2593,8 @@ namespace KeepBallMoving
                 }
                 else
                 {
+                    ScaleShockwaveParticleEffect(effectObject, radius);
+                    PlayParticleEffect(effectObject);
                     Destroy(effectObject, GetParticleEffectLifetime(effectObject));
                 }
 
@@ -2597,6 +2617,21 @@ namespace KeepBallMoving
             renderer.sortingOrder = 32;
 
             Destroy(waveObject, shockwaveEffectDuration);
+        }
+
+        private void ScaleShockwaveParticleEffect(GameObject effectObject, float radius)
+        {
+            float visualScale = Mathf.Max(0.01f, radius) / Mathf.Max(0.001f, shockwaveEffectPrefabRadius);
+            effectObject.transform.localScale = effectObject.transform.localScale * visualScale;
+        }
+
+        private void PlayParticleEffect(GameObject effectObject)
+        {
+            ParticleSystem[] particleSystems = effectObject.GetComponentsInChildren<ParticleSystem>();
+            for (int i = 0; i < particleSystems.Length; i++)
+            {
+                particleSystems[i].Play(true);
+            }
         }
 
         private float GetParticleEffectLifetime(GameObject effectObject)

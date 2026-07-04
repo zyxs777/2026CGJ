@@ -289,6 +289,8 @@ hold：持球时为 true；不持球时为 false
 
 如果预制体没有 Animator，或 Animator 没有对应参数，代码会静默跳过。
 
+球员预制体可以包含名为 `target` 的子节点。`PlayerAgent` 会自动查找这个子节点，真正持球时显示，不持球时隐藏。
+
 球员 Sprite 默认朝右。运行时向左移动会设置 `flipX=true`，向右移动会恢复 `flipX=false`，原地或竖向移动时保持当前朝向。
 
 球员颜色也在球员预制体的 `PlayerAgent` 上调：
@@ -460,8 +462,8 @@ PVP 模式下，红方 AI 自动接球和自动出球不会执行，但红方球
 | 额外前锋 | 2 | 每层额外获得 1 个右方前锋球员。 |
 | 额外中场 | 2 | 每层额外获得 1 个右方中场球员。 |
 | 额外后卫 | 2 | 每层额外获得 1 个右方后卫球员。 |
-| 护球立场 | 3 | 己方接球时产生圆形震荡波，推开周围敌方球员。 |
-| 传球立场 | 3 | 己方传球时产生圆形震荡波，推开周围敌方球员。 |
+| 护球立场 | 3 | 己方接球时产生圆形震荡波，范围和击退距离随层数提高。 |
+| 传球立场 | 3 | 己方传球时产生圆形震荡波，范围和击退距离随层数提高。 |
 | 幻影球员 | 1 | 己方传球后可按 Z/B 在球所在位置生成幻影球员；每次进球后的新一轮最多使用 1 次。 |
 
 香蕉球暂时保留枚举和曲线代码，但当前不在可选天赋池中。
@@ -517,16 +519,24 @@ PVP 模式下，红方 AI 自动接球和自动出球不会执行，但红方球
 - 震荡波视觉通过预制体实现。
 - 蓝方使用 `waveEffectblue.prefab`。
 - 红方使用 `waveEffectred.prefab`。
+- 实际影响范围和视觉特效范围使用同一个最终半径。
+- 立场天赋叠层时，击退距离和影响范围都会提高。
 - 击退不是瞬间传送，而是通过 `PlayerAgent.KnockbackTo` 做短时间 Lerp。
 - 击退期间球员不会执行普通移动。
 
-击退距离配置：
+范围、击退和视觉配置：
 
 ```csharp
+shieldFieldRadius
 shieldFieldPushDistance
+passFieldRadius
 passFieldPushDistance
+fieldRadiusBonusPerStack
 shockwavePushDuration
+shockwaveEffectPrefabRadius
 ```
+
+`fieldRadiusBonusPerStack` 默认每多一层范围提高 25%。例如护球立场 3 层时，最终范围是 `shieldFieldRadius * 1.5`。`shockwaveEffectPrefabRadius` 是粒子预制体未缩放时对应的视觉半径，默认按 3 个世界单位处理；如果更换粒子资源后视觉仍不一致，可以调这个值。
 
 ## 5. 预制体资源
 
@@ -661,8 +671,10 @@ shieldFieldRadius
 shieldFieldPushDistance
 passFieldRadius
 passFieldPushDistance
+fieldRadiusBonusPerStack
 shockwavePushDuration
 shockwaveEffectDuration
+shockwaveEffectPrefabRadius
 phantomPlayerKickSpeed
 phantomPlayerHoldAngularSpeed
 phantomPlayerColor

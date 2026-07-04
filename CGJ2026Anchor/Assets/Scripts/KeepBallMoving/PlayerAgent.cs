@@ -21,6 +21,7 @@ namespace KeepBallMoving
         private Transform holdPointPivot;
         private Transform holdPointTransform;
         private SpriteRenderer holdPointRenderer;
+        private Transform targetIndicator;
         private Animator animator;
         private Color baseColor;
         private Color highlightColor;
@@ -97,6 +98,7 @@ namespace KeepBallMoving
 
             CreateControlRangeVisual(controlRangeSprite, baseColor);
             CreateHoldPointVisual(holdPointSprite, baseColor);
+            CacheTargetIndicator();
             CacheAnimator();
             SetHoldingAnimation(false);
         }
@@ -162,6 +164,7 @@ namespace KeepBallMoving
         {
             isHoldingAnimation = holding;
             SetCatchHighlighted(holding);
+            SetTargetIndicatorVisible(holding);
             SetAnimatorBool(HoldAnimatorHash, animatorHasHold, holding);
             if (holding)
             {
@@ -300,6 +303,40 @@ namespace KeepBallMoving
 
             animatorHasRun = HasAnimatorParameter("run", AnimatorControllerParameterType.Bool);
             animatorHasHold = HasAnimatorParameter("hold", AnimatorControllerParameterType.Bool);
+        }
+
+        private void CacheTargetIndicator()
+        {
+            targetIndicator = FindChildRecursive(transform, "target");
+            SetTargetIndicatorVisible(false);
+        }
+
+        private Transform FindChildRecursive(Transform parent, string childName)
+        {
+            for (int i = 0; i < parent.childCount; i++)
+            {
+                Transform child = parent.GetChild(i);
+                if (string.Equals(child.name, childName, System.StringComparison.OrdinalIgnoreCase))
+                {
+                    return child;
+                }
+
+                Transform match = FindChildRecursive(child, childName);
+                if (match != null)
+                {
+                    return match;
+                }
+            }
+
+            return null;
+        }
+
+        private void SetTargetIndicatorVisible(bool visible)
+        {
+            if (targetIndicator != null)
+            {
+                targetIndicator.gameObject.SetActive(visible);
+            }
         }
 
         private Color GetConfiguredTeamColor(Team playerTeam)
