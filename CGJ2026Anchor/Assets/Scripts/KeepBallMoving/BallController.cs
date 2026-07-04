@@ -2,21 +2,30 @@ using UnityEngine;
 
 namespace KeepBallMoving
 {
-    [RequireComponent(typeof(SpriteRenderer))]
-    [RequireComponent(typeof(Rigidbody2D))]
-    [RequireComponent(typeof(CircleCollider2D))]
     public sealed class BallController : MonoBehaviour
     {
         [SerializeField] private float maxSpeed = 22f;
         [SerializeField] private float minSpeed = 5f;
+        [SerializeField] private Color releaseArrowColor = new Color(1f, 0.95f, 0.25f, 0.9f);
+        [SerializeField] private float releaseArrowLength = 1.05f;
+        [SerializeField] private float releaseArrowThickness = 0.08f;
 
         private Rigidbody2D body;
         private SpriteRenderer spriteRenderer;
+        private Transform releaseArrowRoot;
+        private SpriteRenderer releaseArrowShaft;
+        private SpriteRenderer releaseArrowHeadLeft;
+        private SpriteRenderer releaseArrowHeadRight;
         private PlayerAgent holder;
         private float radius;
         private float holdRadius;
         private float holdAngularSpeed;
         private float holdAngle;
+        private int phantomBounceCount;
+        private int phantomMaxBounces = 3;
+        private float curveRemainingTime;
+        private float curveStrength;
+        private float curveSign = 1f;
         private Vector2 lastFreeDirection = Vector2.right;
 
         public BallState State { get; private set; } = BallState.Free;
@@ -24,6 +33,8 @@ namespace KeepBallMoving
         public Vector2 Velocity => body != null ? body.velocity : Vector2.zero;
         public PlayerAgent Holder => holder;
         public float Radius => radius;
+        public bool IsPhantom { get; private set; }
+        public Team PhantomOwner { get; private set; }
 
         public void Initialize(Sprite sprite, PhysicsMaterial2D physicsMaterial, float radius, float maxBallSpeed)
         {
@@ -31,13 +42,33 @@ namespace KeepBallMoving
             maxSpeed = maxBallSpeed;
 
             spriteRenderer = GetComponent<SpriteRenderer>();
-            spriteRenderer.sprite = sprite;
+            if (spriteRenderer == null)
+            {
+                spriteRenderer = GetComponentInChildren<SpriteRenderer>();
+            }
+
+            if (spriteRenderer == null)
+            {
+                spriteRenderer = gameObject.AddComponent<SpriteRenderer>();
+            }
+
+            if (spriteRenderer.sprite == null)
+            {
+                spriteRenderer.sprite = sprite;
+            }
+
             spriteRenderer.color = Color.white;
             spriteRenderer.sortingOrder = 30;
 
             transform.localScale = Vector3.one * (radius * 2f);
+            CreateReleaseArrow(sprite);
 
             body = GetComponent<Rigidbody2D>();
+            if (body == null)
+            {
+                body = gameObject.AddComponent<Rigidbody2D>();
+            }
+
             body.gravityScale = 0f;
             body.drag = 0.12f;
             body.angularDrag = 0f;
@@ -45,6 +76,11 @@ namespace KeepBallMoving
             body.interpolation = RigidbodyInterpolation2D.Interpolate;
 
             CircleCollider2D circleCollider = GetComponent<CircleCollider2D>();
+            if (circleCollider == null)
+            {
+                circleCollider = gameObject.AddComponent<CircleCollider2D>();
+            }
+
             circleCollider.radius = 0.5f;
             circleCollider.sharedMaterial = physicsMaterial;
         }
@@ -72,12 +108,17 @@ namespace KeepBallMoving
             {
                 body.velocity = lastFreeDirection * minSpeed;
             }
+
+            TickCurve(Time.fixedDeltaTime);
         }
 
         public void ResetBall(Vector2 position, Vector2 velocity)
         {
             State = BallState.Free;
             holder = null;
+            IsPhantom = false;
+            phantomBounceCount = 0;
+            curveRemainingTime = 0f;
             transform.position = position;
 
             if (body == null)
@@ -93,6 +134,8 @@ namespace KeepBallMoving
             {
                 lastFreeDirection = velocity.normalized;
             }
+
+            SetReleaseArrowVisible(false);
         }
 
         public void BeginHold(PlayerAgent newHolder, float minHoldRadius, float angularSpeed)
@@ -116,6 +159,7 @@ namespace KeepBallMoving
             Vector2 heldPosition = GetHeldPosition();
             body.position = heldPosition;
             transform.position = heldPosition;
+            UpdateReleaseArrow();
         }
 
         public void TickHold(float deltaTime)
@@ -129,6 +173,7 @@ namespace KeepBallMoving
             body.MovePosition(GetHeldPosition());
             body.velocity = Vector2.zero;
             body.angularVelocity = 0f;
+            UpdateReleaseArrow();
         }
 
         private Vector2 GetHeldPosition()
@@ -138,11 +183,11 @@ namespace KeepBallMoving
             return holder.Position + offset;
         }
 
-        public void Release(float speed)
+        public Vector2 Release(float speed)
         {
             if (State != BallState.Held || holder == null)
             {
-                return;
+                return Vector2.zero;
             }
 
             Vector2 direction = (Position - holder.Position).normalized;
@@ -152,13 +197,14 @@ namespace KeepBallMoving
             }
 
             ReleaseInDirection(direction, speed);
+            return direction;
         }
 
-        public void ReleaseToward(Vector2 targetPosition, float speed)
+        public Vector2 ReleaseToward(Vector2 targetPosition, float speed)
         {
             if (State != BallState.Held || holder == null)
             {
-                return;
+                return Vector2.zero;
             }
 
             Vector2 direction = (targetPosition - Position).normalized;
@@ -168,16 +214,214 @@ namespace KeepBallMoving
             }
 
             ReleaseInDirection(direction, speed);
+            return direction;
+        }
+
+        public Vector2 ReleaseFromHolderPosition(float speed)
+        {
+            if (State != BallState.Held || holder == null)
+            {
+                return Vector2.zero;
+            }
+
+            Vector2 holderPosition = holder.Position;
+            Vector2 direction = (Position - holderPosition).normalized;
+            if (direction.sqrMagnitude < 0.001f)
+            {
+                direction = holder.Team == Team.Red ? Vector2.left : Vector2.right;
+            }
+
+            ReleaseInDirectionAt(holderPosition, direction, speed);
+            return direction;
+        }
+
+        public void ConfigurePhantom(Team owner, int maxBounces, Color color)
+        {
+            IsPhantom = true;
+            PhantomOwner = owner;
+            phantomBounceCount = 0;
+            phantomMaxBounces = Mathf.Max(1, maxBounces);
+
+            if (spriteRenderer != null)
+            {
+                spriteRenderer.color = color;
+                spriteRenderer.sortingOrder = 29;
+            }
+        }
+
+        public void LaunchPhantom(Vector2 position, Vector2 direction, float speed)
+        {
+            State = BallState.Free;
+            holder = null;
+            transform.position = position;
+
+            if (body == null)
+            {
+                body = GetComponent<Rigidbody2D>();
+            }
+
+            body.bodyType = RigidbodyType2D.Dynamic;
+            body.velocity = direction.normalized * Mathf.Clamp(speed, minSpeed, maxSpeed);
+            body.angularVelocity = 0f;
+            lastFreeDirection = direction.normalized;
+        }
+
+        public void ApplyCurve(float strength, float duration, float sign)
+        {
+            curveStrength = strength;
+            curveRemainingTime = Mathf.Max(0f, duration);
+            curveSign = Mathf.Sign(sign);
+            if (Mathf.Abs(curveSign) < 0.001f)
+            {
+                curveSign = 1f;
+            }
         }
 
         private void ReleaseInDirection(Vector2 direction, float speed)
         {
+            ReleaseInDirectionAt(Position, direction, speed);
+        }
+
+        private void ReleaseInDirectionAt(Vector2 position, Vector2 direction, float speed)
+        {
             State = BallState.Free;
             holder = null;
+            SetReleaseArrowVisible(false);
+            body.position = position;
+            transform.position = position;
             body.bodyType = RigidbodyType2D.Dynamic;
             lastFreeDirection = direction;
             body.velocity = direction * Mathf.Clamp(speed, minSpeed, maxSpeed);
             body.angularVelocity = 0f;
+        }
+
+        private void TickCurve(float deltaTime)
+        {
+            if (curveRemainingTime <= 0f || body == null)
+            {
+                return;
+            }
+
+            Vector2 velocity = body.velocity;
+            if (velocity.sqrMagnitude < 0.01f)
+            {
+                curveRemainingTime = 0f;
+                return;
+            }
+
+            Vector2 perpendicular = new Vector2(-velocity.y, velocity.x).normalized * curveSign;
+            body.AddForce(perpendicular * curveStrength, ForceMode2D.Force);
+            curveRemainingTime -= deltaTime;
+        }
+
+        private void CreateReleaseArrow(Sprite sprite)
+        {
+            if (releaseArrowRoot != null)
+            {
+                return;
+            }
+
+            Sprite arrowSprite = RuntimeSpriteFactory.CreateSquareSprite("KeepBall_ReleaseArrow", Color.white);
+            releaseArrowRoot = new GameObject("ReleaseDirectionArrow").transform;
+            releaseArrowRoot.SetParent(transform);
+            releaseArrowRoot.localPosition = Vector3.zero;
+            releaseArrowRoot.localRotation = Quaternion.identity;
+
+            releaseArrowShaft = CreateArrowPart("Shaft", arrowSprite, 32);
+            releaseArrowHeadLeft = CreateArrowPart("HeadLeft", arrowSprite, 33);
+            releaseArrowHeadRight = CreateArrowPart("HeadRight", arrowSprite, 33);
+            SetReleaseArrowVisible(false);
+        }
+
+        private SpriteRenderer CreateArrowPart(string objectName, Sprite sprite, int sortingOrder)
+        {
+            GameObject partObject = new GameObject(objectName);
+            partObject.transform.SetParent(releaseArrowRoot);
+            partObject.transform.localPosition = Vector3.zero;
+            partObject.transform.localRotation = Quaternion.identity;
+
+            SpriteRenderer renderer = partObject.AddComponent<SpriteRenderer>();
+            renderer.sprite = sprite;
+            renderer.color = releaseArrowColor;
+            renderer.sortingOrder = sortingOrder;
+            return renderer;
+        }
+
+        private void UpdateReleaseArrow()
+        {
+            if (holder == null || releaseArrowRoot == null)
+            {
+                SetReleaseArrowVisible(false);
+                return;
+            }
+
+            Vector2 direction = (Position - holder.Position).normalized;
+            if (direction.sqrMagnitude < 0.001f)
+            {
+                direction = holder.Team == Team.Red ? Vector2.left : Vector2.right;
+            }
+
+            float parentScale = Mathf.Max(0.001f, transform.localScale.x);
+            float localBallRadius = radius / parentScale;
+            float localLength = releaseArrowLength / parentScale;
+            float localThickness = releaseArrowThickness / parentScale;
+            float localHeadLength = localLength * 0.28f;
+            float localHeadThickness = localThickness * 1.35f;
+
+            float angle = Mathf.Atan2(direction.y, direction.x) * Mathf.Rad2Deg;
+            releaseArrowRoot.localRotation = Quaternion.Euler(0f, 0f, angle);
+
+            releaseArrowShaft.transform.localPosition = new Vector3(localBallRadius + localLength * 0.5f, 0f, 0f);
+            releaseArrowShaft.transform.localRotation = Quaternion.identity;
+            releaseArrowShaft.transform.localScale = new Vector3(localLength, localThickness, 1f);
+
+            Vector3 headPosition = new Vector3(localBallRadius + localLength, 0f, 0f);
+            releaseArrowHeadLeft.transform.localPosition = headPosition;
+            releaseArrowHeadLeft.transform.localRotation = Quaternion.Euler(0f, 0f, 145f);
+            releaseArrowHeadLeft.transform.localScale = new Vector3(localHeadLength, localHeadThickness, 1f);
+
+            releaseArrowHeadRight.transform.localPosition = headPosition;
+            releaseArrowHeadRight.transform.localRotation = Quaternion.Euler(0f, 0f, -145f);
+            releaseArrowHeadRight.transform.localScale = new Vector3(localHeadLength, localHeadThickness, 1f);
+
+            SetReleaseArrowVisible(true);
+        }
+
+        private void SetReleaseArrowVisible(bool visible)
+        {
+            if (releaseArrowShaft != null)
+            {
+                releaseArrowShaft.enabled = visible;
+            }
+
+            if (releaseArrowHeadLeft != null)
+            {
+                releaseArrowHeadLeft.enabled = visible;
+            }
+
+            if (releaseArrowHeadRight != null)
+            {
+                releaseArrowHeadRight.enabled = visible;
+            }
+        }
+
+        private void OnCollisionEnter2D(Collision2D collision)
+        {
+            if (!IsPhantom)
+            {
+                return;
+            }
+
+            if (collision.collider.GetComponent<BallController>() != null)
+            {
+                return;
+            }
+
+            phantomBounceCount++;
+            if (phantomBounceCount >= phantomMaxBounces)
+            {
+                Destroy(gameObject);
+            }
         }
     }
 }

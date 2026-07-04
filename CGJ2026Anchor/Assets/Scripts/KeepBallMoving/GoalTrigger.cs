@@ -24,7 +24,7 @@ namespace KeepBallMoving
             BallController ball = other.GetComponent<BallController>();
             if (ball != null)
             {
-                gameManager.OnGoal(side);
+                gameManager.OnGoal(side, ball);
             }
         }
     }

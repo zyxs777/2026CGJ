@@ -1,9 +1,8 @@
+using System.Collections;
 using UnityEngine;
 
 namespace KeepBallMoving
 {
-    [RequireComponent(typeof(SpriteRenderer))]
-    [RequireComponent(typeof(CircleCollider2D))]
     public sealed class PlayerAgent : MonoBehaviour
     {
         [SerializeField] private Team team;
@@ -21,6 +20,8 @@ namespace KeepBallMoving
         private Vector2 spawnPosition;
         private float holdPointRadius;
         private float holdPointAngle;
+        private float controlRangeMultiplier = 1f;
+        private Coroutine knockbackRoutine;
 
         public Team Team => team;
         public PlayerRole Role => role;
@@ -28,6 +29,7 @@ namespace KeepBallMoving
         public float BodyRadius => bodyRadius;
         public Vector2 Position => transform.position;
         public Vector2 HoldPointPosition => holdPointTransform != null ? holdPointTransform.position : transform.position;
+        public bool IsKnockbackActive => knockbackRoutine != null;
 
         public void Initialize(Team playerTeam, PlayerRole playerRole, int index, Vector2 startPosition, Sprite sprite, Sprite controlRangeSprite, Sprite holdPointSprite, Color color, float radius, float catchRange, float pointRadius)
         {
@@ -45,16 +47,42 @@ namespace KeepBallMoving
             transform.localScale = Vector3.one * (bodyRadius * 2f);
 
             spriteRenderer = GetComponent<SpriteRenderer>();
-            spriteRenderer.sprite = sprite;
+            if (spriteRenderer == null)
+            {
+                spriteRenderer = GetComponentInChildren<SpriteRenderer>();
+            }
+
+            if (spriteRenderer == null)
+            {
+                spriteRenderer = gameObject.AddComponent<SpriteRenderer>();
+            }
+
+            if (spriteRenderer.sprite == null)
+            {
+                spriteRenderer.sprite = sprite;
+            }
+
             spriteRenderer.color = baseColor;
             spriteRenderer.sortingOrder = 20;
 
             bodyCollider = GetComponent<CircleCollider2D>();
+            if (bodyCollider == null)
+            {
+                bodyCollider = gameObject.AddComponent<CircleCollider2D>();
+            }
+
             bodyCollider.isTrigger = true;
             bodyCollider.radius = 0.5f;
 
             CreateControlRangeVisual(controlRangeSprite, color);
             CreateHoldPointVisual(holdPointSprite, color);
+        }
+
+        public void SetControlRangeMultiplier(float multiplier)
+        {
+            controlRangeMultiplier = Mathf.Max(0.01f, multiplier);
+            UpdateControlRangeScale();
+            UpdateHoldPointLayout();
         }
 
         public bool CanCatch(BallController ball)
@@ -107,6 +135,16 @@ namespace KeepBallMoving
             transform.position = position;
         }
 
+        public void KnockbackTo(Vector2 targetPosition, float duration)
+        {
+            if (knockbackRoutine != null)
+            {
+                StopCoroutine(knockbackRoutine);
+            }
+
+            knockbackRoutine = StartCoroutine(KnockbackRoutine(targetPosition, Mathf.Max(0.01f, duration)));
+        }
+
         public void SetCatchHighlighted(bool highlighted)
         {
             if (spriteRenderer == null)
@@ -127,8 +165,31 @@ namespace KeepBallMoving
 
         public void ResetToSpawn()
         {
+            if (knockbackRoutine != null)
+            {
+                StopCoroutine(knockbackRoutine);
+                knockbackRoutine = null;
+            }
+
             transform.position = spawnPosition;
             SetCatchHighlighted(false);
+        }
+
+        private IEnumerator KnockbackRoutine(Vector2 targetPosition, float duration)
+        {
+            Vector2 startPosition = Position;
+            float elapsed = 0f;
+
+            while (elapsed < duration)
+            {
+                elapsed += Time.deltaTime;
+                float t = Mathf.Clamp01(elapsed / duration);
+                transform.position = Vector2.Lerp(startPosition, targetPosition, t);
+                yield return null;
+            }
+
+            transform.position = targetPosition;
+            knockbackRoutine = null;
         }
 
         private void CreateControlRangeVisual(Sprite controlRangeSprite, Color color)
@@ -176,7 +237,7 @@ namespace KeepBallMoving
             }
 
             float parentScale = Mathf.Max(0.001f, transform.localScale.x);
-            float localDiameter = catchRadius * 2f / parentScale;
+            float localDiameter = catchRadius * controlRangeMultiplier * 2f / parentScale;
             controlRangeRenderer.transform.localScale = Vector3.one * localDiameter;
         }
 
@@ -188,7 +249,7 @@ namespace KeepBallMoving
             }
 
             float parentScale = Mathf.Max(0.001f, transform.localScale.x);
-            holdPointTransform.localPosition = new Vector3(catchRadius / parentScale, 0f, 0f);
+            holdPointTransform.localPosition = new Vector3(catchRadius * controlRangeMultiplier / parentScale, 0f, 0f);
             holdPointTransform.localScale = Vector3.one * (holdPointRadius * 2f / parentScale);
         }
     }
