@@ -13,6 +13,7 @@ namespace KeepBallMoving
         private Rigidbody2D body;
         private SpriteRenderer spriteRenderer;
         private PlayerAgent holder;
+        private float radius;
         private float holdRadius;
         private float holdAngularSpeed;
         private float holdAngle;
@@ -22,9 +23,11 @@ namespace KeepBallMoving
         public Vector2 Position => transform.position;
         public Vector2 Velocity => body != null ? body.velocity : Vector2.zero;
         public PlayerAgent Holder => holder;
+        public float Radius => radius;
 
         public void Initialize(Sprite sprite, PhysicsMaterial2D physicsMaterial, float radius, float maxBallSpeed)
         {
+            this.radius = radius;
             maxSpeed = maxBallSpeed;
 
             spriteRenderer = GetComponent<SpriteRenderer>();
@@ -92,17 +95,27 @@ namespace KeepBallMoving
             }
         }
 
-        public void BeginHold(PlayerAgent newHolder, float radius, float angularSpeed)
+        public void BeginHold(PlayerAgent newHolder, float minHoldRadius, float angularSpeed)
         {
             holder = newHolder;
-            holdRadius = radius;
+            Vector2 offset = Position - holder.Position;
+            if (offset.sqrMagnitude < 0.001f)
+            {
+                offset = holder.Team == Team.Red ? Vector2.left : Vector2.right;
+            }
+
+            holdRadius = Mathf.Max(offset.magnitude, minHoldRadius);
             holdAngularSpeed = angularSpeed;
-            holdAngle = Vector2.SignedAngle(Vector2.right, Position - holder.Position);
+            holdAngle = Mathf.Atan2(offset.y, offset.x) * Mathf.Rad2Deg;
             State = BallState.Held;
 
             body.velocity = Vector2.zero;
             body.angularVelocity = 0f;
             body.bodyType = RigidbodyType2D.Kinematic;
+
+            Vector2 heldPosition = GetHeldPosition();
+            body.position = heldPosition;
+            transform.position = heldPosition;
         }
 
         public void TickHold(float deltaTime)
@@ -113,13 +126,16 @@ namespace KeepBallMoving
             }
 
             holdAngle += holdAngularSpeed * deltaTime;
-            float radians = holdAngle * Mathf.Deg2Rad;
-            Vector2 offset = new Vector2(Mathf.Cos(radians), Mathf.Sin(radians)) * holdRadius;
-            Vector2 targetPosition = holder.Position + offset;
-
-            body.MovePosition(targetPosition);
+            body.MovePosition(GetHeldPosition());
             body.velocity = Vector2.zero;
             body.angularVelocity = 0f;
+        }
+
+        private Vector2 GetHeldPosition()
+        {
+            float radians = holdAngle * Mathf.Deg2Rad;
+            Vector2 offset = new Vector2(Mathf.Cos(radians), Mathf.Sin(radians)) * holdRadius;
+            return holder.Position + offset;
         }
 
         public void Release(float speed)

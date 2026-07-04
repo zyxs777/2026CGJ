@@ -6,6 +6,13 @@ namespace KeepBallMoving
         Red
     }
 
+    public enum PlayerRole
+    {
+        Forward,
+        Midfielder,
+        Defender
+    }
+
     public enum GoalSide
     {
         Left,

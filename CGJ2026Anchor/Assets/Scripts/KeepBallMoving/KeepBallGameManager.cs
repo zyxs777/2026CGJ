@@ -18,9 +18,10 @@ namespace KeepBallMoving
         [SerializeField] private float playerRadius = 0.5f;
         [SerializeField] private float ballRadius = 0.28f;
         [SerializeField] private float catchRadius = 1.8f;
+        [SerializeField] private float holdPointRadius = 0.18f;
 
         [Header("Hold And Release")]
-        [SerializeField] private float holdRadius = 1.15f;
+        [SerializeField] private float minHoldRadius = 0.9f;
         [SerializeField] private float holdAngularSpeed = 360f;
         [SerializeField] private float minReleaseSpeed = 9f;
         [SerializeField] private float maxReleaseSpeed = 18f;
@@ -30,6 +31,9 @@ namespace KeepBallMoving
         [Header("Simple Movement")]
         [SerializeField] private float blueMoveSpeed = 2.4f;
         [SerializeField] private float redMoveSpeed = 2.8f;
+        [SerializeField] private float forwardMoveSpeedMultiplier = 1.08f;
+        [SerializeField] private float midfielderMoveSpeedMultiplier = 1f;
+        [SerializeField] private float defenderMoveSpeedMultiplier = 0.88f;
         [SerializeField] private float holderMoveSpeedMultiplier = 0.35f;
         [SerializeField] private float separationRadius = 1.25f;
         [SerializeField] private float separationStrength = 1.1f;
@@ -44,6 +48,7 @@ namespace KeepBallMoving
         private Sprite bluePlayerSprite;
         private Sprite redPlayerSprite;
         private Sprite controlRangeSprite;
+        private Sprite holdPointSprite;
         private Sprite ballSprite;
         private Sprite centerRingSprite;
         private PhysicsMaterial2D bounceMaterial;
@@ -138,6 +143,7 @@ namespace KeepBallMoving
             bluePlayerSprite = RuntimeSpriteFactory.CreateCircleSprite("KeepBall_BluePlayer", Color.white);
             redPlayerSprite = RuntimeSpriteFactory.CreateCircleSprite("KeepBall_RedPlayer", Color.white);
             controlRangeSprite = RuntimeSpriteFactory.CreateRingSprite("KeepBall_ControlRange", Color.white, 256, 0.035f);
+            holdPointSprite = RuntimeSpriteFactory.CreateCircleSprite("KeepBall_HoldPoint", Color.white, 96);
             ballSprite = RuntimeSpriteFactory.CreateCircleSprite("KeepBall_Ball", Color.white);
             centerRingSprite = RuntimeSpriteFactory.CreateRingSprite("KeepBall_CenterRing", lineColor, 256, 0.035f);
 
@@ -263,27 +269,45 @@ namespace KeepBallMoving
 
             for (int i = 0; i < playersPerTeam; i++)
             {
-                Vector2 bluePosition = GetPlayerSpawnPosition(Team.Blue, i, playersPerTeam);
-                PlayerAgent blue = CreatePlayer(Team.Blue, i + 1, bluePosition, playersRoot.transform);
+                PlayerRole role = GetRoleForIndex(i, playersPerTeam);
+                Vector2 bluePosition = GetPlayerSpawnPosition(Team.Blue, role, i, playersPerTeam);
+                PlayerAgent blue = CreatePlayer(Team.Blue, role, i + 1, bluePosition, playersRoot.transform);
                 bluePlayers.Add(blue);
 
-                Vector2 redPosition = GetPlayerSpawnPosition(Team.Red, i, playersPerTeam);
-                PlayerAgent red = CreatePlayer(Team.Red, i + 1, redPosition, playersRoot.transform);
+                Vector2 redPosition = GetPlayerSpawnPosition(Team.Red, role, i, playersPerTeam);
+                PlayerAgent red = CreatePlayer(Team.Red, role, i + 1, redPosition, playersRoot.transform);
                 redPlayers.Add(red);
             }
         }
 
-        private Vector2 GetPlayerSpawnPosition(Team team, int index, int total)
+        private PlayerRole GetRoleForIndex(int index, int total)
         {
-            float side = team == Team.Blue ? -1f : 1f;
-            float xBase = side * fieldWidth * 0.24f;
-            float xOffset = ((index % 2) - 0.5f) * 2.8f;
-            float ySpacing = fieldHeight * 0.58f / Mathf.Max(1, total - 1);
-            float y = -fieldHeight * 0.29f + ySpacing * index;
-            return new Vector2(xBase + xOffset, y);
+            int defenderCount = Mathf.Max(1, total / 4);
+            int forwardCount = Mathf.Max(1, Mathf.CeilToInt(total / 3f));
+
+            if (index < defenderCount)
+            {
+                return PlayerRole.Defender;
+            }
+
+            if (index >= total - forwardCount)
+            {
+                return PlayerRole.Forward;
+            }
+
+            return PlayerRole.Midfielder;
         }
 
-        private PlayerAgent CreatePlayer(Team team, int index, Vector2 position, Transform parent)
+        private Vector2 GetPlayerSpawnPosition(Team team, PlayerRole role, int index, int total)
+        {
+            float side = team == Team.Blue ? -1f : 1f;
+            float xRatio = role == PlayerRole.Defender ? 0.36f : role == PlayerRole.Midfielder ? 0.12f : -0.16f;
+            float x = side * fieldWidth * xRatio;
+            float y = GetRoleLaneForIndex(index, total, role, fieldHeight * 0.34f);
+            return new Vector2(x, y);
+        }
+
+        private PlayerAgent CreatePlayer(Team team, PlayerRole role, int index, Vector2 position, Transform parent)
         {
             GameObject playerObject = new GameObject();
             playerObject.transform.SetParent(parent);
@@ -293,13 +317,16 @@ namespace KeepBallMoving
             PlayerAgent player = playerObject.AddComponent<PlayerAgent>();
             player.Initialize(
                 team,
+                role,
                 index,
                 position,
                 team == Team.Blue ? bluePlayerSprite : redPlayerSprite,
                 controlRangeSprite,
+                holdPointSprite,
                 team == Team.Blue ? blueColor : redColor,
                 playerRadius,
-                catchRadius);
+                catchRadius,
+                holdPointRadius);
 
             return player;
         }
@@ -356,7 +383,7 @@ namespace KeepBallMoving
             }
 
             chargeTime = 0f;
-            ball.BeginHold(catcher, holdRadius, holdAngularSpeed);
+            ball.BeginHold(catcher, minHoldRadius, holdAngularSpeed);
             ShowMessage($"抓住！{catcher.name}");
         }
 
@@ -369,7 +396,7 @@ namespace KeepBallMoving
             }
 
             chargeTime = 0f;
-            ball.BeginHold(redCatcher, holdRadius, -holdAngularSpeed);
+            ball.BeginHold(redCatcher, minHoldRadius, -holdAngularSpeed);
             ShowMessage($"红方拿球：{redCatcher.name}");
             return true;
         }
@@ -401,7 +428,7 @@ namespace KeepBallMoving
             foreach (PlayerAgent player in bluePlayers)
             {
                 float distance = Vector2.Distance(player.Position, ball.Position);
-                if (distance <= player.CatchRadius && distance < nearestDistance)
+                if (player.CanCatch(ball) && distance < nearestDistance)
                 {
                     nearest = player;
                     nearestDistance = distance;
@@ -424,7 +451,7 @@ namespace KeepBallMoving
             foreach (PlayerAgent player in players)
             {
                 float distance = Vector2.Distance(player.Position, ball.Position);
-                if (distance <= player.CatchRadius && distance < nearestDistance)
+                if (player.CanControlBall(ball) && distance < nearestDistance)
                 {
                     nearest = player;
                     nearestDistance = distance;
@@ -447,6 +474,58 @@ namespace KeepBallMoving
             }
         }
 
+        private void UpdateHoldPointRotation(float deltaTime)
+        {
+            foreach (PlayerAgent player in bluePlayers)
+            {
+                player.TickHoldPoint(deltaTime, holdAngularSpeed);
+            }
+
+            foreach (PlayerAgent player in redPlayers)
+            {
+                player.TickHoldPoint(deltaTime, -holdAngularSpeed);
+            }
+        }
+
+        private bool TryStealHeldBall()
+        {
+            if (Time.time < autoControlCooldownUntil || ball.Holder == null)
+            {
+                return false;
+            }
+
+            List<PlayerAgent> challengers = ball.Holder.Team == Team.Blue ? redPlayers : bluePlayers;
+            PlayerAgent stealer = FindNearestHoldPointStealer(challengers);
+            if (stealer == null || stealer == ball.Holder)
+            {
+                return false;
+            }
+
+            chargeTime = 0f;
+            ball.BeginHold(stealer, minHoldRadius, stealer.Team == Team.Red ? -holdAngularSpeed : holdAngularSpeed);
+            autoControlCooldownUntil = Time.time + 0.2f;
+            ShowMessage($"{(stealer.Team == Team.Blue ? "蓝方" : "红方")}抢断！");
+            return true;
+        }
+
+        private PlayerAgent FindNearestHoldPointStealer(List<PlayerAgent> players)
+        {
+            PlayerAgent nearest = null;
+            float nearestDistance = float.MaxValue;
+
+            foreach (PlayerAgent player in players)
+            {
+                float distance = Vector2.Distance(player.HoldPointPosition, ball.Position);
+                if (player.IsHoldPointTouchingBall(ball) && distance < nearestDistance)
+                {
+                    nearest = player;
+                    nearestDistance = distance;
+                }
+            }
+
+            return nearest;
+        }
+
         private void UpdatePlayerMovement(float deltaTime)
         {
             for (int i = 0; i < bluePlayers.Count; i++)
@@ -466,25 +545,11 @@ namespace KeepBallMoving
 
         private Vector2 GetBlueSupportTarget(PlayerAgent player, int index)
         {
-            Vector2 ballPosition = ball.Position;
-            Vector2[] offsets =
-            {
-                new Vector2(-2.2f, -2.4f),
-                new Vector2(-2.0f, 2.4f),
-                new Vector2(1.5f, -1.8f),
-                new Vector2(1.5f, 1.8f),
-                new Vector2(3.1f, 0f)
-            };
-
-            Vector2 supportTarget = ballPosition + offsets[index % offsets.Length];
-            Vector2 spawnLean = player.Position;
-            return ClampInsideField(Vector2.Lerp(spawnLean, supportTarget, 0.9f));
+            return GetRoleTarget(player, index, Team.Blue);
         }
 
         private Vector2 GetRedPressureTarget(PlayerAgent player, int index)
         {
-            Vector2 ballPosition = ball.Position;
-            Vector2 rightGoalCenter = new Vector2(fieldWidth * 0.5f, 0f);
             PlayerAgent holder = ball.Holder;
 
             if (ball.State == BallState.Held && holder != null && holder.Team == Team.Blue)
@@ -497,22 +562,68 @@ namespace KeepBallMoving
                 }
             }
 
-            int ballRank = GetDistanceRank(player, redPlayers, ballPosition);
-            if (ball.State == BallState.Free && ballRank < 2)
-            {
-                Vector2 chaseOffset = new Vector2(-0.25f, ballRank == 0 ? -0.55f : 0.55f);
-                return ClampInsideField(ballPosition + chaseOffset);
-            }
+            return GetRoleTarget(player, index, Team.Red);
+        }
 
-            float lineT = 0.35f + 0.12f * (index % 4);
-            Vector2 blockLine = Vector2.Lerp(ballPosition, rightGoalCenter, lineT);
-            float lane = ((index % 5) - 2f) * 0.85f;
-            blockLine.y += lane;
-            return ClampInsideField(blockLine);
+        private Vector2 GetRoleTarget(PlayerAgent player, int index, Team team)
+        {
+            float side = team == Team.Blue ? -1f : 1f;
+            float attackDirection = team == Team.Blue ? 1f : -1f;
+
+            switch (player.Role)
+            {
+                case PlayerRole.Forward:
+                    return GetForwardTarget(index, attackDirection);
+                case PlayerRole.Defender:
+                    return GetDefenderTarget(index, side);
+                default:
+                    return GetMidfielderTarget(player, index, team, side, attackDirection);
+            }
+        }
+
+        private Vector2 GetForwardTarget(int index, float attackDirection)
+        {
+            float lane = GetRoleLaneForIndex(index, playersPerTeam, PlayerRole.Forward, fieldHeight * 0.31f);
+            float advancedX = attackDirection * fieldWidth * 0.28f;
+            float ballAheadX = ball.Position.x + attackDirection * 4.2f;
+            float x = attackDirection > 0f ? Mathf.Max(advancedX, ballAheadX) : Mathf.Min(advancedX, ballAheadX);
+            x = Mathf.Clamp(x, -fieldWidth * 0.43f, fieldWidth * 0.43f);
+
+            float y = Mathf.Lerp(lane, ball.Position.y * 0.45f + lane * 0.55f, 0.45f);
+            return ClampInsideField(new Vector2(x, y));
+        }
+
+        private Vector2 GetDefenderTarget(int index, float side)
+        {
+            float lane = GetRoleLaneForIndex(index, playersPerTeam, PlayerRole.Defender, fieldHeight * 0.28f);
+            float baseX = side * fieldWidth * 0.34f;
+            float ballInOwnHalf = side < 0f ? Mathf.Clamp01(-ball.Position.x / (fieldWidth * 0.5f)) : Mathf.Clamp01(ball.Position.x / (fieldWidth * 0.5f));
+            float x = Mathf.Lerp(baseX, ball.Position.x, ballInOwnHalf * 0.35f);
+            float ownHalfLimit = side < 0f ? -0.8f : 0.8f;
+            x = side < 0f ? Mathf.Min(x, ownHalfLimit) : Mathf.Max(x, ownHalfLimit);
+
+            float y = Mathf.Lerp(lane, ball.Position.y, 0.35f);
+            return ClampInsideField(new Vector2(x, y));
+        }
+
+        private Vector2 GetMidfielderTarget(PlayerAgent player, int index, Team team, float side, float attackDirection)
+        {
+            Vector2 ballPosition = ball.Position;
+            int ballRank = GetDistanceRank(player, team == Team.Blue ? bluePlayers : redPlayers, ballPosition);
+            float lane = GetRoleLaneForIndex(index, playersPerTeam, PlayerRole.Midfielder, fieldHeight * 0.27f);
+            float sideOffset = ballRank % 2 == 0 ? -1.35f : 1.35f;
+            float xOffset = attackDirection * (ballRank == 0 ? -0.7f : 0.9f);
+            Vector2 nearBallTarget = ballPosition + new Vector2(xOffset, sideOffset);
+
+            float midfieldX = side * fieldWidth * 0.06f;
+            Vector2 shapeTarget = new Vector2(midfieldX, lane);
+            return ClampInsideField(Vector2.Lerp(shapeTarget, nearBallTarget, 0.72f));
         }
 
         private void MovePlayer(PlayerAgent player, Vector2 target, List<PlayerAgent> teamPlayers, float speed, float deltaTime)
         {
+            speed *= GetRoleSpeedMultiplier(player.Role);
+
             if (ball.State == BallState.Held && ball.Holder == player)
             {
                 speed *= holderMoveSpeedMultiplier;
@@ -523,6 +634,43 @@ namespace KeepBallMoving
             Vector2 adjustedTarget = target + separation * separationStrength;
             Vector2 next = Vector2.MoveTowards(current, adjustedTarget, speed * deltaTime);
             player.MoveTo(ClampInsideField(next));
+        }
+
+        private float GetRoleSpeedMultiplier(PlayerRole role)
+        {
+            switch (role)
+            {
+                case PlayerRole.Forward:
+                    return forwardMoveSpeedMultiplier;
+                case PlayerRole.Defender:
+                    return defenderMoveSpeedMultiplier;
+                default:
+                    return midfielderMoveSpeedMultiplier;
+            }
+        }
+
+        private float GetRoleLaneForIndex(int index, int total, PlayerRole role, float halfRange)
+        {
+            int roleCount = 0;
+            int roleSlot = 0;
+
+            for (int i = 0; i < total; i++)
+            {
+                if (GetRoleForIndex(i, total) != role)
+                {
+                    continue;
+                }
+
+                if (i < index)
+                {
+                    roleSlot++;
+                }
+
+                roleCount++;
+            }
+
+            float t = roleCount <= 1 ? 0.5f : roleSlot / (float)(roleCount - 1);
+            return Mathf.Lerp(-halfRange, halfRange, t);
         }
 
         private Vector2 GetSeparation(PlayerAgent player, List<PlayerAgent> teamPlayers)

@@ -15,7 +15,7 @@ MonoBehaviour:
   Path: Assets/Sounds/cgj2026anchor/Build/Desktop/Master.strings.bank
   Name: Master.strings
   StudioPath: bank:/Master.strings
-  lastModified: 639186961326811409
+  lastModified: 639187591838121572
   FileSizes:
   - Name: Desktop
     Value: 724
@@ -42,7 +42,7 @@ MonoBehaviour:
   StringsBanks:
   - {fileID: -847060975841403714}
   cacheVersion: 131849
-  cacheTime: 639186961326811409
+  cacheTime: 639187591838121572
   SerializableEventsDict: []
 --- !u!114 &7989198820722828635
 MonoBehaviour:
@@ -59,7 +59,7 @@ MonoBehaviour:
   Path: Assets/Sounds/cgj2026anchor/Build/Desktop/Master.bank
   Name: Master
   StudioPath: bank:/Master
-  lastModified: 639186961326774702
+  lastModified: 639187591838111592
   FileSizes:
   - Name: Desktop
     Value: 1074
