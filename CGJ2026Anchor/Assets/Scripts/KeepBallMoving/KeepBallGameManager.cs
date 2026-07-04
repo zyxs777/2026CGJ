@@ -1,6 +1,7 @@
 ﻿using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.UI;
 
 namespace KeepBallMoving
 {
@@ -25,8 +26,10 @@ namespace KeepBallMoving
         [SerializeField] private PlayerAgent redPlayerPrefab;
         [SerializeField] private PlayerAgent phantomPlayerPrefab;
         [SerializeField] private BallController ballPrefab;
+        [SerializeField] private BallController phantomBallPrefab;
         [SerializeField] private ShockwaveEffect blueShockwavePrefab;
         [SerializeField] private ShockwaveEffect redShockwavePrefab;
+        [SerializeField] private KeepBallTalentBadge talentBadgePrefab;
 
         [Header("Hold And Release")]
         [SerializeField] private float minHoldRadius = 0.9f;
@@ -69,9 +72,9 @@ namespace KeepBallMoving
         [Header("Talents")]
         [SerializeField] private float phantomBallSpawnOffset = 0.75f;
         [SerializeField] private float phantomBallSpeedMultiplier = 0.92f;
-        [SerializeField] private float phantomBallRandomAngle = 24f;
+        [SerializeField] private float phantomBallScatterAngle = 60f;
         [SerializeField] private int phantomBallMaxBounces = 3;
-        [SerializeField] private float bigfootForwardCatchMultiplier = 1.2f;
+        [SerializeField] private float bigfootForwardCatchBonusPerStack = 0.1f;
         [SerializeField] private float shieldFieldRadius = 3.2f;
         [SerializeField] private float shieldFieldPushDistance = 5f;
         [SerializeField] private float passFieldRadius = 2.8f;
@@ -86,8 +89,11 @@ namespace KeepBallMoving
         private readonly List<PlayerAgent> redPlayers = new List<PlayerAgent>();
         private readonly List<PlayerAgent> extraPlayers = new List<PlayerAgent>();
         private readonly List<BallController> phantomBalls = new List<BallController>();
+        private readonly List<KeepBallTalentBadge> blueTalentBadges = new List<KeepBallTalentBadge>();
+        private readonly List<KeepBallTalentBadge> redTalentBadges = new List<KeepBallTalentBadge>();
         private readonly int[] blueTalentCounts = new int[TalentTypeCount];
         private readonly int[] redTalentCounts = new int[TalentTypeCount];
+        private readonly Sprite[] talentIconSprites = new Sprite[TalentTypeCount];
 
         private BallController ball;
         private Transform playersRoot;
@@ -98,6 +104,9 @@ namespace KeepBallMoving
         private Sprite holdPointSprite;
         private Sprite ballSprite;
         private Sprite centerRingSprite;
+        private Canvas talentCanvas;
+        private RectTransform blueTalentPanel;
+        private RectTransform redTalentPanel;
         private PhysicsMaterial2D bounceMaterial;
         private float chargeTime;
         private bool goalLocked;
@@ -109,8 +118,12 @@ namespace KeepBallMoving
         private float autoControlCooldownUntil;
         private float redCurrentHoldDelay;
         private bool blueHoldChargeArmed;
-        private bool bluePhantomPlayerReady;
+        private int bluePhantomPlayerUsesRemaining;
+        private bool bluePhantomPlayerPassWindowActive;
         private PlayerAgent activePhantomPlayer;
+        private PlayerAgent lockedKickoffPlayer;
+        private bool kickoffPlayerLocked;
+        private Vector2 lockedKickoffPosition;
         private Team nextKickoffTeam = Team.Blue;
         private bool talentSelectionOpen;
         private int selectedTalentIndex;
@@ -128,8 +141,13 @@ namespace KeepBallMoving
         private const string DefaultPlayerPrefabPath = "KeepBallMoving/KeepBallPlayer";
         private const string DefaultPhantomPlayerPrefabPath = "KeepBallMoving/KeepBallPhantomPlayer";
         private const string DefaultBallPrefabPath = "KeepBallMoving/KeepBallBall";
+        private const string DefaultPhantomBallPrefabPath = "KeepBallMoving/KeepBallPhantomBall";
         private const string DefaultBlueShockwavePrefabPath = "KeepBallMoving/KeepBallBlueShockwave";
         private const string DefaultRedShockwavePrefabPath = "KeepBallMoving/KeepBallRedShockwave";
+        private const string DefaultTalentBadgePrefabPath = "KeepBallMoving/KeepBallTalentBadge";
+        private const float TalentBadgeWidth = 246f;
+        private const float TalentBadgeHeight = 44f;
+        private const float TalentBadgeGap = 6f;
         private const int TalentChoiceCount = 3;
         private const int TalentTypeCount = 9;
 
@@ -163,6 +181,7 @@ namespace KeepBallMoving
             BuildField();
             SpawnPlayers();
             SpawnBall();
+            SetupTalentUi();
             ResetRound();
         }
 
@@ -376,12 +395,25 @@ namespace KeepBallMoving
             holdPointSprite = RuntimeSpriteFactory.CreateCircleSprite("KeepBall_HoldPoint", Color.white, 96);
             ballSprite = RuntimeSpriteFactory.CreateCircleSprite("KeepBall_Ball", Color.white);
             centerRingSprite = RuntimeSpriteFactory.CreateRingSprite("KeepBall_CenterRing", lineColor, 256, 0.035f);
+            CreateTalentIconSprites();
 
             bounceMaterial = new PhysicsMaterial2D("KeepBall_Bouncy")
             {
                 friction = 0f,
                 bounciness = 0.88f
             };
+        }
+
+        private void CreateTalentIconSprites()
+        {
+            for (int i = 0; i < TalentTypeCount; i++)
+            {
+                TalentId talentId = (TalentId)i;
+                talentIconSprites[i] = RuntimeSpriteFactory.CreateTalentIconSprite(
+                    $"KeepBall_TalentIcon_{talentId}",
+                    GetTalentColor(talentId),
+                    i);
+            }
         }
 
         private void LoadDefaultPrefabs()
@@ -413,6 +445,11 @@ namespace KeepBallMoving
                 ballPrefab = Resources.Load<BallController>(DefaultBallPrefabPath);
             }
 
+            if (phantomBallPrefab == null)
+            {
+                phantomBallPrefab = Resources.Load<BallController>(DefaultPhantomBallPrefabPath);
+            }
+
             if (blueShockwavePrefab == null)
             {
                 blueShockwavePrefab = Resources.Load<ShockwaveEffect>(DefaultBlueShockwavePrefabPath);
@@ -421,6 +458,11 @@ namespace KeepBallMoving
             if (redShockwavePrefab == null)
             {
                 redShockwavePrefab = Resources.Load<ShockwaveEffect>(DefaultRedShockwavePrefabPath);
+            }
+
+            if (talentBadgePrefab == null)
+            {
+                talentBadgePrefab = Resources.Load<KeepBallTalentBadge>(DefaultTalentBadgePrefabPath);
             }
         }
 
@@ -703,6 +745,133 @@ namespace KeepBallMoving
             ball.Initialize(ballSprite, bounceMaterial, ballRadius, maxBallSpeed);
         }
 
+        private void SetupTalentUi()
+        {
+            if (talentCanvas != null)
+            {
+                UpdateTalentUi();
+                return;
+            }
+
+            GameObject canvasObject = new GameObject("KeepBallTalentUI", typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
+            canvasObject.transform.SetParent(transform, false);
+
+            talentCanvas = canvasObject.GetComponent<Canvas>();
+            talentCanvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            talentCanvas.sortingOrder = 45;
+
+            CanvasScaler scaler = canvasObject.GetComponent<CanvasScaler>();
+            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            scaler.referenceResolution = new Vector2(1920f, 1080f);
+            scaler.screenMatchMode = CanvasScaler.ScreenMatchMode.MatchWidthOrHeight;
+            scaler.matchWidthOrHeight = 0.5f;
+
+            blueTalentPanel = CreateTalentPanel("BlueTalentPanel", new Vector2(0f, 0f), new Vector2(0f, 0f), new Vector2(18f, 18f));
+            redTalentPanel = CreateTalentPanel("RedTalentPanel", new Vector2(1f, 0f), new Vector2(1f, 0f), new Vector2(-18f, 18f));
+            UpdateTalentUi();
+        }
+
+        private RectTransform CreateTalentPanel(string panelName, Vector2 anchor, Vector2 pivot, Vector2 anchoredPosition)
+        {
+            GameObject panelObject = new GameObject(panelName, typeof(RectTransform));
+            panelObject.transform.SetParent(talentCanvas.transform, false);
+
+            RectTransform rectTransform = panelObject.GetComponent<RectTransform>();
+            rectTransform.anchorMin = anchor;
+            rectTransform.anchorMax = anchor;
+            rectTransform.pivot = pivot;
+            rectTransform.anchoredPosition = anchoredPosition;
+            rectTransform.sizeDelta = new Vector2(TalentBadgeWidth, TalentBadgeHeight * TalentTypeCount + TalentBadgeGap * (TalentTypeCount - 1));
+            return rectTransform;
+        }
+
+        private void UpdateTalentUi()
+        {
+            if (talentCanvas == null || blueTalentPanel == null || redTalentPanel == null)
+            {
+                return;
+            }
+
+            RefreshTalentBadges(Team.Blue);
+            RefreshTalentBadges(Team.Red);
+        }
+
+        private void RefreshTalentBadges(Team team)
+        {
+            List<KeepBallTalentBadge> badges = team == Team.Blue ? blueTalentBadges : redTalentBadges;
+            RectTransform panel = team == Team.Blue ? blueTalentPanel : redTalentPanel;
+            int[] counts = GetTalentCounts(team);
+            int visibleIndex = 0;
+
+            for (int i = 0; i < TalentTypeCount; i++)
+            {
+                if (counts[i] <= 0)
+                {
+                    continue;
+                }
+
+                TalentId talentId = (TalentId)i;
+                KeepBallTalentBadge badge = GetTalentBadge(team, visibleIndex, panel);
+                badge.gameObject.SetActive(true);
+                badge.SetData(
+                    squareSprite,
+                    talentIconSprites[i] != null ? talentIconSprites[i] : ballSprite,
+                    GetTalentName(talentId),
+                    counts[i],
+                    GetTalentMaxCount(talentId),
+                    GetTalentColor(talentId),
+                    team);
+
+                RectTransform badgeRect = badge.RectTransform;
+                Vector2 anchor = team == Team.Blue ? new Vector2(0f, 0f) : new Vector2(1f, 0f);
+                badgeRect.anchorMin = anchor;
+                badgeRect.anchorMax = anchor;
+                badgeRect.pivot = anchor;
+                badgeRect.sizeDelta = new Vector2(TalentBadgeWidth, TalentBadgeHeight);
+                badgeRect.anchoredPosition = new Vector2(0f, visibleIndex * (TalentBadgeHeight + TalentBadgeGap));
+                badgeRect.SetSiblingIndex(visibleIndex);
+
+                visibleIndex++;
+            }
+
+            for (int i = visibleIndex; i < badges.Count; i++)
+            {
+                if (badges[i] != null)
+                {
+                    badges[i].gameObject.SetActive(false);
+                }
+            }
+        }
+
+        private KeepBallTalentBadge GetTalentBadge(Team team, int index, RectTransform parent)
+        {
+            List<KeepBallTalentBadge> badges = team == Team.Blue ? blueTalentBadges : redTalentBadges;
+            while (badges.Count <= index)
+            {
+                KeepBallTalentBadge badge;
+                if (talentBadgePrefab != null)
+                {
+                    badge = Instantiate(talentBadgePrefab, parent);
+                }
+                else
+                {
+                    GameObject badgeObject = new GameObject("KeepBallTalentBadge", typeof(RectTransform));
+                    badgeObject.transform.SetParent(parent, false);
+                    badge = badgeObject.AddComponent<KeepBallTalentBadge>();
+                }
+
+                badges.Add(badge);
+            }
+
+            KeepBallTalentBadge result = badges[index];
+            if (result.transform.parent != parent)
+            {
+                result.transform.SetParent(parent, false);
+            }
+
+            return result;
+        }
+
         private void RestartMatch()
         {
             blueScore = 0;
@@ -725,11 +894,13 @@ namespace KeepBallMoving
             nextTalentMoveInputTime = 0f;
             chargeTime = 0f;
             blueHoldChargeArmed = false;
-            bluePhantomPlayerReady = false;
+            bluePhantomPlayerUsesRemaining = HasTalent(Team.Blue, TalentId.PhantomPlayer) ? 1 : 0;
+            bluePhantomPlayerPassWindowActive = false;
             redCurrentHoldDelay = redAutoHoldDelay;
             autoControlCooldownUntil = Time.time + redKickoffAutoHoldLockout;
             DestroyActivePhantomPlayer();
             ClearPhantomBalls();
+            ClearKickoffLock();
 
             ResetTeamToFormation(Team.Blue);
             ResetTeamToFormation(Team.Red);
@@ -737,9 +908,15 @@ namespace KeepBallMoving
             PlayerAgent kickoffPlayer = FindKickoffPlayer(nextKickoffTeam);
             if (kickoffPlayer != null)
             {
+                lockedKickoffPosition = GetFixedKickoffPosition(nextKickoffTeam);
+                lockedKickoffPlayer = kickoffPlayer;
+                kickoffPlayerLocked = true;
+                kickoffPlayer.ResetToPosition(lockedKickoffPosition);
+                SyncPlayerControlRangeVisual(kickoffPlayer);
+
                 Vector2 kickoffDirection = nextKickoffTeam == Team.Blue ? Vector2.right : Vector2.left;
                 float kickoffAngularSpeed = nextKickoffTeam == Team.Blue ? holdAngularSpeed : -holdAngularSpeed;
-                Vector2 startPosition = kickoffPlayer.Position + kickoffDirection * minHoldRadius;
+                Vector2 startPosition = lockedKickoffPosition + kickoffDirection * minHoldRadius;
                 ball.ResetBall(startPosition, Vector2.zero);
                 ball.BeginHold(kickoffPlayer, minHoldRadius, kickoffAngularSpeed);
 
@@ -752,6 +929,7 @@ namespace KeepBallMoving
             }
             else
             {
+                ClearKickoffLock();
                 float fallbackX = nextKickoffTeam == Team.Blue ? -fieldWidth * 0.25f : fieldWidth * 0.25f;
                 Vector2 startPosition = new Vector2(fallbackX, 0f);
                 ball.ResetBall(startPosition, Vector2.zero);
@@ -772,7 +950,8 @@ namespace KeepBallMoving
 
             chargeTime = 0f;
             blueHoldChargeArmed = true;
-            bluePhantomPlayerReady = false;
+            bluePhantomPlayerPassWindowActive = false;
+            ClearKickoffLockIfHolder(ball.Holder);
             DestroyActivePhantomPlayer();
             ball.BeginHold(catcher, minHoldRadius, holdAngularSpeed);
             ApplyCatchTalents(catcher.Team, catcher.Position);
@@ -789,7 +968,8 @@ namespace KeepBallMoving
 
             chargeTime = 0f;
             blueHoldChargeArmed = false;
-            bluePhantomPlayerReady = false;
+            bluePhantomPlayerPassWindowActive = false;
+            ClearKickoffLockIfHolder(ball.Holder);
             DestroyActivePhantomPlayer();
             redCurrentHoldDelay = RollRedHoldDelay();
             ball.BeginHold(redCatcher, minHoldRadius, -holdAngularSpeed);
@@ -805,8 +985,9 @@ namespace KeepBallMoving
             float charge01 = Mathf.Clamp01(chargeTime / maxChargeTime);
             float releaseSpeed = Mathf.Lerp(minReleaseSpeed, maxReleaseSpeed, charge01);
             Vector2 releaseDirection = ball.Release(releaseSpeed);
+            ClearKickoffLockIfHolder(holder);
             ApplyReleaseTalents(releaseTeam, ball.Position, releaseDirection, releaseSpeed);
-            bluePhantomPlayerReady = releaseTeam == Team.Blue && HasTalent(Team.Blue, TalentId.PhantomPlayer);
+            bluePhantomPlayerPassWindowActive = releaseTeam == Team.Blue && bluePhantomPlayerUsesRemaining > 0 && HasTalent(Team.Blue, TalentId.PhantomPlayer);
             ShowMessage(charge01 >= 0.95f ? "爆射！" : "释放！");
             chargeTime = 0f;
             blueHoldChargeArmed = false;
@@ -820,8 +1001,9 @@ namespace KeepBallMoving
             Vector2 target = GetRedReleaseTarget(out float releaseSpeed, out string message);
             float finalSpeed = ApplyRedKickSpeedVariance(releaseSpeed);
             Vector2 releaseDirection = ball.ReleaseToward(target, finalSpeed);
+            ClearKickoffLockIfHolder(holder);
             ApplyReleaseTalents(releaseTeam, ball.Position, releaseDirection, finalSpeed);
-            bluePhantomPlayerReady = false;
+            bluePhantomPlayerPassWindowActive = false;
             ShowMessage(message);
             chargeTime = 0f;
             blueHoldChargeArmed = false;
@@ -830,7 +1012,7 @@ namespace KeepBallMoving
 
         private bool TryActivatePhantomPlayer()
         {
-            if (!bluePhantomPlayerReady || activePhantomPlayer != null)
+            if (bluePhantomPlayerUsesRemaining <= 0 || !bluePhantomPlayerPassWindowActive || activePhantomPlayer != null)
             {
                 return false;
             }
@@ -840,14 +1022,15 @@ namespace KeepBallMoving
                 return false;
             }
 
-            bluePhantomPlayerReady = false;
-
             PlayerAgent prefab = phantomPlayerPrefab != null ? phantomPlayerPrefab : bluePlayerPrefab;
             if (prefab == null)
             {
                 ShowMessage("缺少幻影球员预制体");
                 return true;
             }
+
+            bluePhantomPlayerUsesRemaining = 0;
+            bluePhantomPlayerPassWindowActive = false;
 
             Vector2 spawnPosition = ClampInsideField(ball.Position);
             activePhantomPlayer = Instantiate(prefab, spawnPosition, Quaternion.identity, playersRoot);
@@ -900,6 +1083,27 @@ namespace KeepBallMoving
             }
 
             return players.Count > 0 ? players[0] : null;
+        }
+
+        private Vector2 GetFixedKickoffPosition(Team team)
+        {
+            float side = team == Team.Blue ? -1f : 1f;
+            return ClampInsideField(new Vector2(side * fieldWidth * GetRoleFormationRatio(PlayerRole.Defender), 0f));
+        }
+
+        private void ClearKickoffLockIfHolder(PlayerAgent holder)
+        {
+            if (holder != null && holder == lockedKickoffPlayer)
+            {
+                ClearKickoffLock();
+            }
+        }
+
+        private void ClearKickoffLock()
+        {
+            kickoffPlayerLocked = false;
+            lockedKickoffPlayer = null;
+            lockedKickoffPosition = Vector2.zero;
         }
 
         private PlayerAgent FindLastRole(List<PlayerAgent> players, PlayerRole role)
@@ -1074,8 +1278,8 @@ namespace KeepBallMoving
                 return false;
             }
 
-            float controlDistance = GetEffectiveCatchRadius(player) + targetBall.Radius;
-            return Vector2.Distance(player.Position, targetBall.Position) <= controlDistance;
+            float hitDistance = player.BodyRadius + targetBall.Radius;
+            return Vector2.Distance(player.Position, targetBall.Position) <= hitDistance;
         }
 
         private bool CanPlayerInterceptPhantom(PlayerAgent player, BallController targetBall)
@@ -1095,7 +1299,7 @@ namespace KeepBallMoving
             int bigfootCount = GetTalentCount(player.Team, TalentId.BigfootForward);
             if (player.Role == PlayerRole.Forward && bigfootCount > 0)
             {
-                multiplier += (bigfootForwardCatchMultiplier - 1f) * bigfootCount;
+                multiplier += bigfootForwardCatchBonusPerStack * bigfootCount;
             }
 
             return player.CatchRadius * multiplier;
@@ -1199,6 +1403,7 @@ namespace KeepBallMoving
                 redCurrentHoldDelay = RollRedHoldDelay();
             }
 
+            ClearKickoffLockIfHolder(ball.Holder);
             ball.BeginHold(stealer, minHoldRadius, stealer.Team == Team.Red ? -holdAngularSpeed : holdAngularSpeed);
             autoControlCooldownUntil = Time.time + 0.2f;
             ShowMessage($"{(stealer.Team == Team.Blue ? "蓝方" : "红方")}抢断");
@@ -1320,6 +1525,12 @@ namespace KeepBallMoving
 
         private void MovePlayer(PlayerAgent player, Vector2 target, List<PlayerAgent> teamPlayers, float speed, float deltaTime)
         {
+            if (kickoffPlayerLocked && player == lockedKickoffPlayer)
+            {
+                player.MoveTo(lockedKickoffPosition);
+                return;
+            }
+
             if (player.IsKnockbackActive)
             {
                 return;
@@ -1499,7 +1710,9 @@ namespace KeepBallMoving
                 Destroy(scoringBall.gameObject);
             }
 
-            bluePhantomPlayerReady = false;
+            bluePhantomPlayerUsesRemaining = 0;
+            bluePhantomPlayerPassWindowActive = false;
+            ClearKickoffLock();
             DestroyActivePhantomPlayer();
 
             StartCoroutine(ShowTalentSelectionAfterGoal());
@@ -1528,13 +1741,26 @@ namespace KeepBallMoving
                 TalentId.PassField,
                 TalentId.PhantomPlayer
             };
+            List<TalentId> availablePool = new List<TalentId>();
+            foreach (TalentId talentId in pool)
+            {
+                if (CanGainTalent(Team.Blue, talentId))
+                {
+                    availablePool.Add(talentId);
+                }
+            }
+            List<TalentId> fallbackAvailablePool = new List<TalentId>(availablePool);
 
             for (int i = 0; i < TalentChoiceCount; i++)
             {
-                int swapIndex = Random.Range(i, pool.Length);
-                TalentId picked = pool[swapIndex];
-                pool[swapIndex] = pool[i];
-                pool[i] = picked;
+                if (availablePool.Count == 0)
+                {
+                    availablePool = fallbackAvailablePool.Count > 0 ? new List<TalentId>(fallbackAvailablePool) : new List<TalentId>(pool);
+                }
+
+                int pickIndex = Random.Range(0, availablePool.Count);
+                TalentId picked = availablePool[pickIndex];
+                availablePool.RemoveAt(pickIndex);
                 currentTalentOptions[i] = CreateTalentOption(picked);
             }
         }
@@ -1548,7 +1774,7 @@ namespace KeepBallMoving
                     {
                         Id = id,
                         Name = "幻影足球",
-                        Description = "每次传球时朝传球方向生成一颗带随机角度的幻影足球。幻影足球弹射 3 次或被敌人拦截后消失，进球同样有效。",
+                        Description = "每层传球时多生成一颗幻影足球，最多 3 层。多颗幻影足球会平分 60 度散射角。幻影足球弹射 3 次或被敌人拦截后消失，进球同样有效。",
                         AccentColor = new Color(0.42f, 0.72f, 1f, 1f)
                     };
                 case TalentId.BigfootForward:
@@ -1556,7 +1782,7 @@ namespace KeepBallMoving
                     {
                         Id = id,
                         Name = "大脚怪前锋",
-                        Description = "前锋接球范围提高 50%。多次获得时继续叠加。",
+                        Description = "前锋接球范围每层提高 10%，最多 3 层。",
                         AccentColor = new Color(1f, 0.6f, 0.18f, 1f)
                     };
                 case TalentId.ExtraForward:
@@ -1564,7 +1790,7 @@ namespace KeepBallMoving
                     {
                         Id = id,
                         Name = "额外前锋",
-                        Description = "额外获得一个右方前锋球员。",
+                        Description = "额外获得一个右方前锋球员，最多 2 层。",
                         AccentColor = new Color(1f, 0.28f, 0.22f, 1f)
                     };
                 case TalentId.ExtraMidfielder:
@@ -1572,7 +1798,7 @@ namespace KeepBallMoving
                     {
                         Id = id,
                         Name = "额外中场",
-                        Description = "额外获得一个右方中场球员。",
+                        Description = "额外获得一个右方中场球员，最多 2 层。",
                         AccentColor = new Color(0.38f, 1f, 0.44f, 1f)
                     };
                 case TalentId.ExtraDefender:
@@ -1580,7 +1806,7 @@ namespace KeepBallMoving
                     {
                         Id = id,
                         Name = "额外后卫",
-                        Description = "额外获得一个右方后卫球员。",
+                        Description = "额外获得一个右方后卫球员，最多 2 层。",
                         AccentColor = new Color(0.35f, 0.58f, 1f, 1f)
                     };
                 case TalentId.ShieldField:
@@ -1588,7 +1814,7 @@ namespace KeepBallMoving
                     {
                         Id = id,
                         Name = "护球立场",
-                        Description = "己方接球时产生圆形震荡波，推开周围敌方球员。",
+                        Description = "己方接球时产生圆形震荡波，推开周围敌方球员。最多 3 层，击退效果保持当前叠加方式。",
                         AccentColor = new Color(0.25f, 1f, 0.86f, 1f)
                     };
                 case TalentId.PassField:
@@ -1596,7 +1822,7 @@ namespace KeepBallMoving
                     {
                         Id = id,
                         Name = "传球立场",
-                        Description = "己方传球时产生圆形震荡波，推开周围敌方球员。",
+                        Description = "己方传球时产生圆形震荡波，推开周围敌方球员。最多 3 层，击退效果保持当前叠加方式。",
                         AccentColor = new Color(0.78f, 0.45f, 1f, 1f)
                     };
                 case TalentId.PhantomPlayer:
@@ -1604,7 +1830,7 @@ namespace KeepBallMoving
                     {
                         Id = id,
                         Name = "幻影球员",
-                        Description = "己方传球后可按 Z/B 在球所在位置生成幻影球员，球会绕着幻影球员运动。按空格/A 从幻影球员位置踢出，踢出后幻影球员消失。每次传球只能触发一次。",
+                        Description = "己方传球后可按 Z/B 在球所在位置生成幻影球员，球会绕着幻影球员运动。每次进球后的新一轮最多使用 1 次。",
                         AccentColor = new Color(0.42f, 0.92f, 1f, 1f)
                     };
                 default:
@@ -1626,22 +1852,47 @@ namespace KeepBallMoving
             }
 
             TalentOption playerTalent = currentTalentOptions[index];
-            TalentOption enemyTalent = currentTalentOptions[Random.Range(0, currentTalentOptions.Length)];
+            TalentOption enemyTalent = GetRandomAvailableTalentOption(Team.Red);
 
-            ApplyTalent(Team.Blue, playerTalent);
-            ApplyTalent(Team.Red, enemyTalent);
+            bool playerGained = ApplyTalent(Team.Blue, playerTalent);
+            bool enemyGained = ApplyTalent(Team.Red, enemyTalent);
 
-            lastBlueTalentText = playerTalent.Name;
-            lastRedTalentText = enemyTalent.Name;
+            lastBlueTalentText = playerGained ? playerTalent.Name : $"{playerTalent.Name}已满";
+            lastRedTalentText = enemyGained ? enemyTalent.Name : $"{enemyTalent.Name}已满";
             talentSelectionOpen = false;
 
-            ShowMessage($"蓝方获得：{playerTalent.Name}；红方获得：{enemyTalent.Name}");
+            ShowMessage($"蓝方获得：{lastBlueTalentText}；红方获得：{lastRedTalentText}");
             ResetRound();
         }
 
-        private void ApplyTalent(Team team, TalentOption talent)
+        private TalentOption GetRandomAvailableTalentOption(Team team)
         {
-            GetTalentCounts(team)[(int)talent.Id]++;
+            List<TalentOption> availableOptions = new List<TalentOption>();
+            foreach (TalentOption option in currentTalentOptions)
+            {
+                if (CanGainTalent(team, option.Id))
+                {
+                    availableOptions.Add(option);
+                }
+            }
+
+            if (availableOptions.Count == 0)
+            {
+                return currentTalentOptions[Random.Range(0, currentTalentOptions.Length)];
+            }
+
+            return availableOptions[Random.Range(0, availableOptions.Count)];
+        }
+
+        private bool ApplyTalent(Team team, TalentOption talent)
+        {
+            if (!CanGainTalent(team, talent.Id))
+            {
+                return false;
+            }
+
+            int[] counts = GetTalentCounts(team);
+            counts[(int)talent.Id] = Mathf.Min(counts[(int)talent.Id] + 1, GetTalentMaxCount(talent.Id));
 
             switch (talent.Id)
             {
@@ -1657,6 +1908,8 @@ namespace KeepBallMoving
             }
 
             SyncTeamControlRangeVisuals(team);
+            UpdateTalentUi();
+            return true;
         }
 
         private void ApplyReleaseTalents(Team team, Vector2 origin, Vector2 direction, float speed)
@@ -1676,7 +1929,14 @@ namespace KeepBallMoving
 
             if (HasTalent(team, TalentId.PhantomFootball))
             {
-                SpawnPhantomBall(team, origin, Rotate(direction, Random.Range(-phantomBallRandomAngle, phantomBallRandomAngle)), speed * phantomBallSpeedMultiplier);
+                int phantomCount = GetTalentCount(team, TalentId.PhantomFootball);
+                float halfScatterAngle = phantomBallScatterAngle * 0.5f;
+                for (int i = 0; i < phantomCount; i++)
+                {
+                    float t = phantomCount <= 1 ? 0.5f : i / (float)(phantomCount - 1);
+                    float angle = Mathf.Lerp(-halfScatterAngle, halfScatterAngle, t);
+                    SpawnPhantomBall(team, origin, Rotate(direction, angle), speed * phantomBallSpeedMultiplier);
+                }
             }
         }
 
@@ -1748,10 +2008,11 @@ namespace KeepBallMoving
         private void SpawnPhantomBall(Team owner, Vector2 origin, Vector2 direction, float speed)
         {
             BallController phantom;
+            BallController prefab = phantomBallPrefab != null ? phantomBallPrefab : ballPrefab;
 
-            if (ballPrefab != null)
+            if (prefab != null)
             {
-                phantom = Instantiate(ballPrefab, transform);
+                phantom = Instantiate(prefab, transform);
             }
             else
             {
@@ -1855,11 +2116,37 @@ namespace KeepBallMoving
             }
 
             SyncAllControlRangeVisuals();
+            UpdateTalentUi();
         }
 
         private bool HasTalent(Team team, TalentId talentId)
         {
             return GetTalentCount(team, talentId) > 0;
+        }
+
+        private bool CanGainTalent(Team team, TalentId talentId)
+        {
+            return GetTalentCount(team, talentId) < GetTalentMaxCount(talentId);
+        }
+
+        private int GetTalentMaxCount(TalentId talentId)
+        {
+            switch (talentId)
+            {
+                case TalentId.PhantomFootball:
+                case TalentId.BigfootForward:
+                case TalentId.ShieldField:
+                case TalentId.PassField:
+                    return 3;
+                case TalentId.ExtraForward:
+                case TalentId.ExtraMidfielder:
+                case TalentId.ExtraDefender:
+                    return 2;
+                case TalentId.PhantomPlayer:
+                    return 1;
+                default:
+                    return 1;
+            }
         }
 
         private int GetTalentCount(Team team, TalentId talentId)
@@ -2010,11 +2297,9 @@ namespace KeepBallMoving
                 $"状态：{stateText}\n" +
                 $"蓄力：{charge01:P0}\n" +
                 $"球速：{ball.Velocity.magnitude:0.0}\n" +
-                $"蓝方天赋：{GetTalentSummary(Team.Blue)}\n" +
-                $"红方天赋：{GetTalentSummary(Team.Red)}\n" +
                 $"{message}";
 
-            GUI.Box(new Rect(16f, 86f, 420f, 226f), text, style);
+            GUI.Box(new Rect(16f, 86f, 420f, 166f), text, style);
 
             if (talentSelectionOpen)
             {
@@ -2125,7 +2410,7 @@ namespace KeepBallMoving
             DrawIconPlaceholderLabel(iconRect);
 
             Rect descriptionRect = new Rect(cardRect.x + 16f, cardRect.y + 208f, cardRect.width - 32f, 122f);
-            string description = $"{option.Description}\n\n当前拥有：{GetTalentCount(Team.Blue, option.Id)}";
+            string description = $"{option.Description}\n\n当前拥有：{GetTalentCount(Team.Blue, option.Id)} / {GetTalentMaxCount(option.Id)}";
             GUI.Label(descriptionRect, description, descriptionStyle);
 
             GUIStyle chooseStyle = new GUIStyle(GUI.skin.label)
