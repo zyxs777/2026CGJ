@@ -25,6 +25,8 @@ namespace KeepBallMoving
         private float curveStrength;
         private float curveSign = 1f;
         private Vector2 lastFreeDirection = Vector2.right;
+        private bool hasHeldBounds;
+        private Rect heldBounds;
 
         public BallState State { get; private set; } = BallState.Free;
         public Vector2 Position => transform.position;
@@ -82,6 +84,12 @@ namespace KeepBallMoving
 
             circleCollider.radius = 0.5f;
             circleCollider.sharedMaterial = physicsMaterial;
+        }
+
+        public void SetHeldBounds(Rect bounds)
+        {
+            heldBounds = bounds;
+            hasHeldBounds = bounds.width > 0.001f && bounds.height > 0.001f;
         }
 
         private void FixedUpdate()
@@ -183,7 +191,9 @@ namespace KeepBallMoving
             }
 
             holdAngle += holdAngularSpeed * deltaTime;
-            body.MovePosition(GetHeldPosition());
+            Vector2 heldPosition = GetHeldPosition();
+            body.MovePosition(heldPosition);
+            transform.position = heldPosition;
             body.velocity = Vector2.zero;
             body.angularVelocity = 0f;
             UpdateFastRotateSpeed(0f);
@@ -198,7 +208,19 @@ namespace KeepBallMoving
         {
             float radians = holdAngle * Mathf.Deg2Rad;
             Vector2 offset = new Vector2(Mathf.Cos(radians), Mathf.Sin(radians)) * holdRadius;
-            return holder.Position + offset;
+            return ClampHeldPosition(holder.Position + offset);
+        }
+
+        private Vector2 ClampHeldPosition(Vector2 position)
+        {
+            if (!hasHeldBounds)
+            {
+                return position;
+            }
+
+            return new Vector2(
+                Mathf.Clamp(position.x, heldBounds.xMin, heldBounds.xMax),
+                Mathf.Clamp(position.y, heldBounds.yMin, heldBounds.yMax));
         }
 
         public Vector2 Release(float speed)
@@ -283,7 +305,9 @@ namespace KeepBallMoving
             }
 
             body.bodyType = RigidbodyType2D.Kinematic;
-            body.position = transform.position;
+            Vector2 frozenPosition = ClampHeldPosition(transform.position);
+            body.position = frozenPosition;
+            transform.position = frozenPosition;
             body.velocity = Vector2.zero;
             body.angularVelocity = 0f;
             UpdateFastRotateSpeed(0f);
@@ -360,6 +384,7 @@ namespace KeepBallMoving
 
         private void ReleaseInDirectionAt(Vector2 position, Vector2 direction, float speed)
         {
+            position = ClampHeldPosition(position);
             State = BallState.Free;
             ClearHolderAnimation();
             holder = null;

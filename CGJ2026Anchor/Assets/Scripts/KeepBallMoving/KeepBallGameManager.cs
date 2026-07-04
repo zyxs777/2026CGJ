@@ -133,8 +133,8 @@ namespace KeepBallMoving
         [SerializeField] private float directionalControlHoldSpeedBonusPerStack = 0.25f;
         [SerializeField] private float directionalControlReleaseSpeedBonusPerStack = 0.12f;
         [SerializeField] private float directionalControlInputThreshold = 0.35f;
-        [SerializeField] private float dashPassDistance = 3f;
-        [SerializeField] private float dashPassDuration = 0.22f;
+        [SerializeField] private float dashPassDistance = 4f;
+        [SerializeField] private float dashPassDuration = 0.3f;
 
         [Header("Talent Selection UI")]
         [SerializeField] private Texture2D talentSelectionBackgroundTexture;
@@ -1309,6 +1309,7 @@ namespace KeepBallMoving
             }
 
             ball.Initialize(ballSprite, bounceMaterial, ballRadius, maxBallSpeed);
+            ConfigureBallHeldBounds(ball);
         }
 
         private void SetupTalentUi()
@@ -1548,9 +1549,10 @@ namespace KeepBallMoving
 
                 Vector2 kickoffDirection = nextKickoffTeam == Team.Blue ? Vector2.right : Vector2.left;
                 float kickoffAngularSpeed = nextKickoffTeam == Team.Blue ? holdAngularSpeed : -holdAngularSpeed;
-                Vector2 startPosition = lockedKickoffPosition + kickoffDirection * minHoldRadius;
+                float kickoffHoldRadius = GetKickoffHoldRadius(kickoffPlayer);
+                Vector2 startPosition = lockedKickoffPosition + kickoffDirection * kickoffHoldRadius;
                 ball.ResetBall(startPosition, Vector2.zero);
-                ball.BeginHold(kickoffPlayer, minHoldRadius, kickoffAngularSpeed);
+                ball.BeginHold(kickoffPlayer, kickoffHoldRadius, kickoffAngularSpeed);
 
                 if (nextKickoffTeam == Team.Red)
                 {
@@ -1842,6 +1844,16 @@ namespace KeepBallMoving
             }
 
             return players.Count > 0 ? players[0] : null;
+        }
+
+        private float GetKickoffHoldRadius(PlayerAgent kickoffPlayer)
+        {
+            if (!IsSkyGiant(kickoffPlayer))
+            {
+                return minHoldRadius;
+            }
+
+            return Mathf.Max(minHoldRadius, GetEffectiveCatchRadius(kickoffPlayer));
         }
 
         private Vector2 GetFixedKickoffPosition(Team team)
@@ -2705,6 +2717,23 @@ namespace KeepBallMoving
                 Mathf.Clamp(position.y, -halfHeight, halfHeight));
         }
 
+        private void ConfigureBallHeldBounds(BallController targetBall)
+        {
+            if (targetBall == null)
+            {
+                return;
+            }
+
+            float margin = Mathf.Max(0.01f, targetBall.Radius + 0.05f);
+            float width = Mathf.Max(0.01f, fieldWidth - margin * 2f);
+            float height = Mathf.Max(0.01f, fieldHeight - margin * 2f);
+            targetBall.SetHeldBounds(new Rect(
+                -fieldWidth * 0.5f + margin,
+                -fieldHeight * 0.5f + margin,
+                width,
+                height));
+        }
+
         public void OnGoal(GoalSide side, BallController scoringBall = null)
         {
             if (goalLocked)
@@ -3514,6 +3543,7 @@ namespace KeepBallMoving
             }
 
             phantom.Initialize(ballSprite, bounceMaterial, ballRadius * 0.86f, maxBallSpeed);
+            ConfigureBallHeldBounds(phantom);
             Color color = owner == Team.Blue ? new Color(0.35f, 0.75f, 1f, 0.7f) : new Color(1f, 0.35f, 0.35f, 0.7f);
             phantom.ConfigurePhantom(owner, phantomBallMaxBounces, color);
             phantom.LaunchPhantom(origin + direction.normalized * phantomBallSpawnOffset, direction, speed);
