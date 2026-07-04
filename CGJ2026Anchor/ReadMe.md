@@ -219,12 +219,9 @@ Hold 半径规则：
 
 包含：
 
-- 绿色球场背景。
-- 上下左右边界。
-- 中线。
-- 中圈。
-- 左右禁区线。
-- 左右球门。
+- 球场视觉预制体。
+- 上下左右边界碰撞。
+- 左右球门触发器。
 - 球场边界反弹。
 
 默认尺寸：
@@ -247,7 +244,7 @@ Assets/Resources/KeepBallMoving/KeepBallField.prefab
 - 提前打开这个 prefab，就可以直接配置 `Grass` 的 Sprite、Color、Transform、Sorting Order 等。
 - 默认 `Grass` 使用 `Assets/Resources/KeepBallMoving/BG2.png`。
 
-如果 `KeepBallField.prefab` 不存在，代码才会回退到旧的运行时 Grass 生成逻辑。中线、中圈、禁区线、墙体碰撞和球门逻辑仍由代码生成并叠在球场预制体上方。
+旧的运行时中线、中圈、边线、禁区线、球门线贴图默认隐藏，不会盖在 `KeepBallField.prefab` 上。墙体碰撞和球门触发器仍由代码生成，但不显示 SpriteRenderer。需要临时看旧线条时，可以把 `KeepBallGameManager.showGeneratedFieldLines` 改为 true。
 
 ### 4.2 足球物理
 

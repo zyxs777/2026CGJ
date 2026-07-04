@@ -20,6 +20,7 @@ namespace KeepBallMoving
         [SerializeField] private Sprite fieldSprite;
         [SerializeField] private string fieldSpriteResourcePath = "KeepBallMoving/BG2";
         [SerializeField] private Color fieldSpriteTint = Color.white;
+        [SerializeField] private bool showGeneratedFieldLines;
         [SerializeField] private float wallThickness = 0.5f;
         [SerializeField] private float goalDepth = 1f;
         [SerializeField] private float goalHeight = 4.5f;
@@ -765,15 +766,19 @@ namespace KeepBallMoving
             fieldRoot.transform.SetParent(transform);
 
             CreateFieldVisual(fieldRoot.transform);
-            CreateVisualRect("CenterLine", Vector2.zero, new Vector2(0.06f, fieldHeight), lineColor, 0, fieldRoot.transform);
-            CreateVisualRect("HalfwayMark", Vector2.zero, new Vector2(0.25f, 0.25f), lineColor, 1, fieldRoot.transform);
-            CreateVisualRect("TopLine", new Vector2(0f, fieldHeight * 0.5f), new Vector2(fieldWidth, 0.06f), lineColor, 0, fieldRoot.transform);
-            CreateVisualRect("BottomLine", new Vector2(0f, -fieldHeight * 0.5f), new Vector2(fieldWidth, 0.06f), lineColor, 0, fieldRoot.transform);
-            CreateVisualRect("LeftLine", new Vector2(-fieldWidth * 0.5f, 0f), new Vector2(0.06f, fieldHeight), lineColor, 0, fieldRoot.transform);
-            CreateVisualRect("RightLine", new Vector2(fieldWidth * 0.5f, 0f), new Vector2(0.06f, fieldHeight), lineColor, 0, fieldRoot.transform);
-            CreateCenterRing(fieldRoot.transform);
-            CreatePenaltyBox("LeftPenaltyBox", -1f, fieldRoot.transform);
-            CreatePenaltyBox("RightPenaltyBox", 1f, fieldRoot.transform);
+
+            if (showGeneratedFieldLines)
+            {
+                CreateVisualRect("CenterLine", Vector2.zero, new Vector2(0.06f, fieldHeight), lineColor, 0, fieldRoot.transform);
+                CreateVisualRect("HalfwayMark", Vector2.zero, new Vector2(0.25f, 0.25f), lineColor, 1, fieldRoot.transform);
+                CreateVisualRect("TopLine", new Vector2(0f, fieldHeight * 0.5f), new Vector2(fieldWidth, 0.06f), lineColor, 0, fieldRoot.transform);
+                CreateVisualRect("BottomLine", new Vector2(0f, -fieldHeight * 0.5f), new Vector2(fieldWidth, 0.06f), lineColor, 0, fieldRoot.transform);
+                CreateVisualRect("LeftLine", new Vector2(-fieldWidth * 0.5f, 0f), new Vector2(0.06f, fieldHeight), lineColor, 0, fieldRoot.transform);
+                CreateVisualRect("RightLine", new Vector2(fieldWidth * 0.5f, 0f), new Vector2(0.06f, fieldHeight), lineColor, 0, fieldRoot.transform);
+                CreateCenterRing(fieldRoot.transform);
+                CreatePenaltyBox("LeftPenaltyBox", -1f, fieldRoot.transform);
+                CreatePenaltyBox("RightPenaltyBox", 1f, fieldRoot.transform);
+            }
 
             CreateWall("TopWall", new Vector2(0f, fieldHeight * 0.5f + wallThickness * 0.5f), new Vector2(fieldWidth + wallThickness * 2f, wallThickness), fieldRoot.transform);
             CreateWall("BottomWall", new Vector2(0f, -fieldHeight * 0.5f - wallThickness * 0.5f), new Vector2(fieldWidth + wallThickness * 2f, wallThickness), fieldRoot.transform);
@@ -836,9 +841,7 @@ namespace KeepBallMoving
 
         private GameObject CreateVisualRect(string name, Vector2 position, Vector2 size, Color color, int sortingOrder, Transform parent, Sprite spriteOverride = null)
         {
-            GameObject rect = new GameObject(name);
-            rect.transform.SetParent(parent);
-            rect.transform.position = position;
+            GameObject rect = CreateRectObject(name, position, size, parent);
 
             SpriteRenderer renderer = rect.AddComponent<SpriteRenderer>();
             renderer.sprite = spriteOverride != null ? spriteOverride : squareSprite;
@@ -854,9 +857,20 @@ namespace KeepBallMoving
             return rect;
         }
 
+        private GameObject CreateRectObject(string name, Vector2 position, Vector2 size, Transform parent)
+        {
+            GameObject rect = new GameObject(name);
+            rect.transform.SetParent(parent);
+            rect.transform.position = position;
+            rect.transform.localScale = new Vector3(size.x, size.y, 1f);
+            return rect;
+        }
+
         private void CreateWall(string name, Vector2 position, Vector2 size, Transform parent)
         {
-            GameObject wall = CreateVisualRect(name, position, size, lineColor, 2, parent);
+            GameObject wall = showGeneratedFieldLines
+                ? CreateVisualRect(name, position, size, lineColor, 2, parent)
+                : CreateRectObject(name, position, size, parent);
             BoxCollider2D collider = wall.AddComponent<BoxCollider2D>();
             collider.size = Vector2.one;
             collider.sharedMaterial = bounceMaterial;
@@ -865,9 +879,16 @@ namespace KeepBallMoving
         private void CreateGoal(GoalSide side, Vector2 position, Transform parent)
         {
             string sideName = side == GoalSide.Left ? "Left" : "Right";
-            GameObject goal = CreateVisualRect($"{sideName}GoalTrigger", position, new Vector2(goalDepth, goalHeight), new Color(1f, 1f, 1f, 0.18f), 3, parent);
+            GameObject goal = showGeneratedFieldLines
+                ? CreateVisualRect($"{sideName}GoalTrigger", position, new Vector2(goalDepth, goalHeight), new Color(1f, 1f, 1f, 0.18f), 3, parent)
+                : CreateRectObject($"{sideName}GoalTrigger", position, new Vector2(goalDepth, goalHeight), parent);
             GoalTrigger trigger = goal.AddComponent<GoalTrigger>();
             trigger.Initialize(this, side, new Vector2(goalDepth, goalHeight));
+
+            if (!showGeneratedFieldLines)
+            {
+                return;
+            }
 
             float sign = side == GoalSide.Left ? -1f : 1f;
             CreateVisualRect($"{sideName}GoalBack", new Vector2(sign * (fieldWidth * 0.5f + goalDepth), 0f), new Vector2(0.06f, goalHeight), lineColor, 4, parent);
