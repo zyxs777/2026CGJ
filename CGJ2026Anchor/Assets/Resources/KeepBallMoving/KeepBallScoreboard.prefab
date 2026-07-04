@@ -56,9 +56,9 @@ MonoBehaviour:
   infoText: {fileID: 4789667712420535695}
   backgroundSprite: {fileID: 21300000, guid: dc50ec5d5c877844081512c14c70d083, type: 3}
   backgroundSpriteResourcePath: KeepBallMoving/point
-  scoreTextColor: {r: 1, g: 1, b: 1, a: 1}
-  infoTextColor: {r: 1, g: 1, b: 1, a: 1}
-  size: {x: 520, y: 118}
+  scoreTextColor: {r: 0.3301887, g: 0.3301887, b: 0.3301887, a: 1}
+  infoTextColor: {r: 0.254717, g: 0.254717, b: 0.254717, a: 1}
+  size: {x: 700, y: 150}
 --- !u!1 &3797309058291562777
 GameObject:
   m_ObjectHideFlags: 0

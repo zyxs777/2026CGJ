@@ -28,7 +28,7 @@ namespace KeepBallMoving
         public void SetScore(int blueScore, int redScore, int targetScore, string matchMode, string kickoffLabel)
         {
             EnsureBuilt();
-            scoreText.text = $"蓝方 {blueScore}  -  {redScore} 红方";
+            scoreText.text = $"蓝方   {blueScore} - {redScore}   红方";
             infoText.text = $"目标：先到 {Mathf.Max(1, targetScore)} 球 / {matchMode} / {kickoffLabel}开球";
         }
 
