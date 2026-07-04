@@ -119,10 +119,10 @@ namespace KeepBallMoving
         [SerializeField] private float phantomBallScatterAngle = 60f;
         [SerializeField] private int phantomBallMaxBounces = 3;
         [SerializeField] private float bigfootForwardCatchBonusPerStack = 0.1f;
-        [SerializeField] private float shieldFieldRadius = 3.2f;
-        [SerializeField] private float shieldFieldPushDistance = 5f;
-        [SerializeField] private float passFieldRadius = 2.8f;
-        [SerializeField] private float passFieldPushDistance = 1.8f;
+        [SerializeField] private float shieldFieldRadius = 3f;
+        [SerializeField] private float shieldFieldPushDistance = 2f;
+        [SerializeField] private float passFieldRadius = 3f;
+        [SerializeField] private float passFieldPushDistance = 2f;
         [SerializeField] private float fieldRadiusBonusPerStack = 0.25f;
         [SerializeField] private float shockwavePushDuration = 0.18f;
         [SerializeField] private float shockwaveEffectDuration = 0.35f;
@@ -143,6 +143,9 @@ namespace KeepBallMoving
         [SerializeField] private Sprite blueTalentSelectionMarkerSprite;
         [SerializeField] private Sprite redTalentSelectionMarkerSprite;
         [SerializeField] private string talentSelectionMarkerResourcePath = "KeepBallMoving/target";
+
+        [Header("Debug UI")]
+        [SerializeField] private bool showStatusDebugUi;
 
         [Header("Goal Presentation")]
         [SerializeField, Range(0.05f, 1f)] private float goalSlowTimeScale = 0.18f;
@@ -175,6 +178,8 @@ namespace KeepBallMoving
         private Canvas talentCanvas;
         private RectTransform blueTalentPanel;
         private RectTransform redTalentPanel;
+        private GoalTrigger leftGoalTrigger;
+        private GoalTrigger rightGoalTrigger;
         private Camera gameplayCamera;
         private PhysicsMaterial2D bounceMaterial;
         private Vector3 defaultCameraPosition;
@@ -1128,6 +1133,14 @@ namespace KeepBallMoving
                 : CreateRectObject($"{sideName}GoalTrigger", position, new Vector2(goalDepth, goalHeight), parent);
             GoalTrigger trigger = goal.AddComponent<GoalTrigger>();
             trigger.Initialize(this, side, new Vector2(goalDepth, goalHeight));
+            if (side == GoalSide.Left)
+            {
+                leftGoalTrigger = trigger;
+            }
+            else
+            {
+                rightGoalTrigger = trigger;
+            }
 
             if (!showGeneratedFieldLines)
             {
@@ -1510,6 +1523,7 @@ namespace KeepBallMoving
         {
             RestoreGoalPresentationState();
             goalLocked = false;
+            SetGoalTriggersEnabled(true);
             talentSelectionOpen = false;
             victoryOpen = false;
             talentSecondPickPending = false;
@@ -1714,11 +1728,16 @@ namespace KeepBallMoving
         private IEnumerator DashPassRoutine(PlayerAgent holder, Team team, Vector2 releaseDirection, float releaseSpeed, float charge01)
         {
             dashPassActive = true;
-            ball.FreezeHeldAtCurrentPosition();
             holder.SetHoldingAnimation(false);
             holder.SetCatchHighlighted(true);
 
             Vector2 startPosition = holder.Position;
+            Vector2 ballOffset = ball.Position - startPosition;
+            if (ballOffset.sqrMagnitude < 0.001f)
+            {
+                ballOffset = releaseDirection.normalized * Mathf.Max(minHoldRadius, ball.Radius + holder.BodyRadius);
+            }
+
             Vector2 targetPosition = ClampInsideField(startPosition + releaseDirection.normalized * Mathf.Max(0f, dashPassDistance));
             float duration = Mathf.Max(0.01f, dashPassDuration);
             float elapsed = 0f;
@@ -1731,6 +1750,7 @@ namespace KeepBallMoving
                 float t = Mathf.Clamp01(elapsed / duration);
                 float easedT = 1f - (1f - t) * (1f - t);
                 holder.MoveTo(ClampInsideField(Vector2.Lerp(startPosition, targetPosition, easedT)));
+                ball.MoveHeldToPosition(holder.Position + ballOffset);
                 yield return null;
             }
 
@@ -2750,6 +2770,7 @@ namespace KeepBallMoving
             }
 
             goalLocked = true;
+            SetGoalTriggersEnabled(false);
             Vector2 goalFocusPosition = scoringBall != null ? scoringBall.Position : GetGoalFocusFallback(side);
             if (scoringBall != null)
             {
@@ -2793,6 +2814,19 @@ namespace KeepBallMoving
 
             SpawnGoalEffect(goalFocusPosition);
             StartCoroutine(PlayGoalSequence(goalFocusPosition, goalMessage, goalColor, HasTeamWon(scoringTeam), scoringTeam));
+        }
+
+        private void SetGoalTriggersEnabled(bool enabled)
+        {
+            if (leftGoalTrigger != null)
+            {
+                leftGoalTrigger.SetTriggerEnabled(enabled);
+            }
+
+            if (rightGoalTrigger != null)
+            {
+                rightGoalTrigger.SetTriggerEnabled(enabled);
+            }
         }
 
         private bool HasTeamWon(Team team)
@@ -3188,6 +3222,12 @@ namespace KeepBallMoving
                     return;
                 }
 
+                if (ShouldAutoPickTalentForTeam(currentTalentPickingTeam))
+                {
+                    AutoPickSecondTalentForAi();
+                    return;
+                }
+
                 ShowMessage($"{GetTeamLabel(talentFirstPickTeam)}获得：{pickedTalent.Name}；{GetTeamLabel(talentSecondPickTeam)}从剩余天赋中选择");
                 return;
             }
@@ -3247,6 +3287,39 @@ namespace KeepBallMoving
             }
 
             ShowMessage($"{GetTeamLabel(autoTeam)}随机获得：{gainedText}；{GetTeamLabel(currentTalentPickingTeam)}从剩余天赋中选择");
+        }
+
+        private void AutoPickSecondTalentForAi()
+        {
+            Team autoTeam = currentTalentPickingTeam;
+            int pickedIndex = FindRandomSelectableTalentIndex(autoTeam);
+            if (pickedIndex < 0)
+            {
+                talentSelectionOpen = false;
+                talentSecondPickPending = false;
+                ShowMessage($"{GetTeamLabel(autoTeam)}没有可选的剩余天赋");
+                ResetRound();
+                return;
+            }
+
+            TalentOption pickedTalent = currentTalentOptions[pickedIndex];
+            SetPickedTalentIndex(autoTeam, pickedIndex);
+            bool gained = ApplyTalent(autoTeam, pickedTalent);
+            string gainedText = gained ? pickedTalent.Name : $"{pickedTalent.Name}已满";
+            if (autoTeam == Team.Blue)
+            {
+                lastBlueTalentText = gainedText;
+            }
+            else
+            {
+                lastRedTalentText = gainedText;
+            }
+
+            talentOptionTaken[pickedIndex] = true;
+            talentSelectionOpen = false;
+            talentSecondPickPending = false;
+            ShowMessage($"{GetTeamLabel(autoTeam)}随机获得：{gainedText}");
+            ResetRound();
         }
 
         private void SetPickedTalentIndex(Team team, int index)
@@ -3445,7 +3518,42 @@ namespace KeepBallMoving
                 enemy.KnockbackTo(targetPosition, shockwavePushDuration);
             }
 
+            DestroyEnemyPhantomBallsInShockwave(owner, center, radius);
             CreateShockwaveVisual(owner, center, radius, color);
+        }
+
+        private void DestroyEnemyPhantomBallsInShockwave(Team owner, Vector2 center, float radius)
+        {
+            float safeRadius = Mathf.Max(0f, radius);
+            float radiusSqr = safeRadius * safeRadius;
+            bool destroyedAny = false;
+            for (int i = phantomBalls.Count - 1; i >= 0; i--)
+            {
+                BallController phantom = phantomBalls[i];
+                if (phantom == null)
+                {
+                    phantomBalls.RemoveAt(i);
+                    continue;
+                }
+
+                if (!phantom.IsPhantom || phantom.PhantomOwner == owner)
+                {
+                    continue;
+                }
+
+                if (Vector2.SqrMagnitude(phantom.Position - center) > radiusSqr)
+                {
+                    continue;
+                }
+
+                DestroyPhantomBall(phantom);
+                destroyedAny = true;
+            }
+
+            if (destroyedAny)
+            {
+                ShowMessage($"{GetTeamLabel(owner)}立场摧毁幻影足球");
+            }
         }
 
         private void CreateShockwaveVisual(Team owner, Vector2 center, float radius, Color fallbackColor)
@@ -3955,28 +4063,10 @@ namespace KeepBallMoving
         {
             DrawGoalBanner();
 
-            GUIStyle style = new GUIStyle(GUI.skin.box)
+            if (showStatusDebugUi)
             {
-                alignment = TextAnchor.UpperLeft,
-                fontSize = 18,
-                normal = { textColor = Color.white }
-            };
-
-            string defaultMessage = IsPvpMode()
-                ? "蓝方：空格/Z/手柄1A-B；红方：Enter或右Ctrl/右Shift或/手柄2A-B；M 切 PVE"
-                : "空格/手柄1A 抓球和蓄力，Z/手柄1B 召唤幻影球员，M 切 PVP，R 重置，N 重新开始";
-            string message = Time.time <= messageUntil ? messageText : defaultMessage;
-            float charge01 = Mathf.Clamp01(chargeTime / maxChargeTime);
-            string text =
-                $"《别让球停下来》Unity 基础原型\n" +
-                $"模式：{GetMatchModeLabel()}\n" +
-                $"蓝方 {blueScore} : {redScore} 红方\n" +
-                $"状态：{stateText}\n" +
-                $"蓄力：{charge01:P0}\n" +
-                $"球速：{ball.Velocity.magnitude:0.0}\n" +
-                $"{message}";
-
-            GUI.Box(new Rect(16f, 86f, 460f, 188f), text, style);
+                DrawStatusDebug();
+            }
 
             if (talentSelectionOpen)
             {
@@ -3992,6 +4082,33 @@ namespace KeepBallMoving
             {
                 DrawVictoryUi();
             }
+        }
+
+        private void DrawStatusDebug()
+        {
+            GUIStyle style = new GUIStyle(GUI.skin.box)
+            {
+                alignment = TextAnchor.UpperLeft,
+                fontSize = 18,
+                normal = { textColor = Color.white }
+            };
+
+            string defaultMessage = IsPvpMode()
+                ? "蓝方：空格/Z/手柄1A-B；红方：Enter或右Ctrl/右Shift或/手柄2A-B；M 切 PVE"
+                : "空格/手柄1A 抓球和蓄力，Z/手柄1B 召唤幻影球员，M 切 PVP，R 重置，N 重新开始";
+            string message = Time.time <= messageUntil ? messageText : defaultMessage;
+            float charge01 = Mathf.Clamp01(chargeTime / maxChargeTime);
+            float ballSpeed = ball != null ? ball.Velocity.magnitude : 0f;
+            string text =
+                $"《别让球停下来》Unity 基础原型\n" +
+                $"模式：{GetMatchModeLabel()}\n" +
+                $"蓝方 {blueScore} : {redScore} 红方\n" +
+                $"状态：{stateText}\n" +
+                $"蓄力：{charge01:P0}\n" +
+                $"球速：{ballSpeed:0.0}\n" +
+                $"{message}";
+
+            GUI.Box(new Rect(16f, 86f, 460f, 188f), text, style);
         }
 
         private void DrawInputDebug()

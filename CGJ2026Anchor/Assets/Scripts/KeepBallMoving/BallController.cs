@@ -313,6 +313,27 @@ namespace KeepBallMoving
             UpdateFastRotateSpeed(0f);
         }
 
+        public void MoveHeldToPosition(Vector2 position)
+        {
+            if (State != BallState.Held || holder == null)
+            {
+                return;
+            }
+
+            if (body == null)
+            {
+                body = GetComponent<Rigidbody2D>();
+            }
+
+            Vector2 heldPosition = ClampHeldPosition(position);
+            body.bodyType = RigidbodyType2D.Kinematic;
+            body.position = heldPosition;
+            transform.position = heldPosition;
+            body.velocity = Vector2.zero;
+            body.angularVelocity = 0f;
+            UpdateFastRotateSpeed(0f);
+        }
+
         public void ConfigurePhantom(Team owner, int maxBounces, Color color)
         {
             IsPhantom = true;
