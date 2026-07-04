@@ -695,7 +695,7 @@ namespace KeepBallMoving
             mainCamera.backgroundColor = new Color(0.04f, 0.11f, 0.08f, 1f);
             gameplayCamera = mainCamera;
             defaultCameraPosition = mainCamera.transform.position;
-            defaultCameraOrthographicSize = mainCamera.orthographicSize;
+            defaultCameraOrthographicSize = 12;
         }
 
         private void BuildField()
