@@ -235,6 +235,23 @@ namespace KeepBallMoving
             return direction;
         }
 
+        public Vector2 ReleaseInDirectionFromCurrent(Vector2 direction, float speed)
+        {
+            if (State != BallState.Held || holder == null)
+            {
+                return Vector2.zero;
+            }
+
+            if (direction.sqrMagnitude < 0.001f)
+            {
+                direction = holder.Team == Team.Red ? Vector2.left : Vector2.right;
+            }
+
+            direction.Normalize();
+            ReleaseInDirection(direction, speed);
+            return direction;
+        }
+
         public Vector2 ReleaseFromHolderPosition(float speed)
         {
             if (State != BallState.Held || holder == null)
@@ -251,6 +268,25 @@ namespace KeepBallMoving
 
             ReleaseInDirectionAt(holderPosition, direction, speed);
             return direction;
+        }
+
+        public void FreezeHeldAtCurrentPosition()
+        {
+            if (State != BallState.Held || holder == null)
+            {
+                return;
+            }
+
+            if (body == null)
+            {
+                body = GetComponent<Rigidbody2D>();
+            }
+
+            body.bodyType = RigidbodyType2D.Kinematic;
+            body.position = transform.position;
+            body.velocity = Vector2.zero;
+            body.angularVelocity = 0f;
+            UpdateFastRotateSpeed(0f);
         }
 
         public void ConfigurePhantom(Team owner, int maxBounces, Color color)

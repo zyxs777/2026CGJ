@@ -18,7 +18,8 @@ namespace KeepBallMoving
         private enum ButtonReadMode
         {
             Down,
-            Up
+            Up,
+            Held
         }
 
         private static readonly KeyCode[] LegacyPrimaryButtons =
@@ -75,6 +76,12 @@ namespace KeepBallMoving
                 ReadRewiredButton(gamepadIndex, anyGamepad, GamepadButton.Phantom, ButtonReadMode.Down);
         }
 
+        public static bool IsPhantomHeld(int gamepadIndex, bool anyGamepad)
+        {
+            return ReadButton(gamepadIndex, anyGamepad, GamepadButton.Phantom, ButtonReadMode.Held) ||
+                ReadRewiredButton(gamepadIndex, anyGamepad, GamepadButton.Phantom, ButtonReadMode.Held);
+        }
+
         public static bool IsLegacyPrimaryDown(int gamepadIndex, bool anyGamepad)
         {
             return ReadLegacyButton(gamepadIndex, anyGamepad, GamepadButton.Primary, ButtonReadMode.Down);
@@ -88,6 +95,11 @@ namespace KeepBallMoving
         public static bool IsLegacyPhantomDown(int gamepadIndex, bool anyGamepad)
         {
             return ReadLegacyButton(gamepadIndex, anyGamepad, GamepadButton.Phantom, ButtonReadMode.Down);
+        }
+
+        public static bool IsLegacyPhantomHeld(int gamepadIndex, bool anyGamepad)
+        {
+            return ReadLegacyButton(gamepadIndex, anyGamepad, GamepadButton.Phantom, ButtonReadMode.Held);
         }
 
         public static float GetHorizontal(int gamepadIndex, bool anyGamepad)
@@ -206,7 +218,15 @@ namespace KeepBallMoving
                 return false;
             }
 
-            return mode == ButtonReadMode.Down ? joystick.GetButtonDown(buttonIndex) : joystick.GetButtonUp(buttonIndex);
+            switch (mode)
+            {
+                case ButtonReadMode.Down:
+                    return joystick.GetButtonDown(buttonIndex);
+                case ButtonReadMode.Up:
+                    return joystick.GetButtonUp(buttonIndex);
+                default:
+                    return joystick.GetButton(buttonIndex);
+            }
         }
 
         private static Rewired.Joystick GetRewiredJoystick(int joystickIndex)
@@ -280,7 +300,15 @@ namespace KeepBallMoving
             if (anyGamepad)
             {
                 KeyCode anyKey = button == GamepadButton.Primary ? KeyCode.JoystickButton0 : KeyCode.JoystickButton1;
-                return mode == ButtonReadMode.Down ? Input.GetKeyDown(anyKey) : Input.GetKeyUp(anyKey);
+                switch (mode)
+                {
+                    case ButtonReadMode.Down:
+                        return Input.GetKeyDown(anyKey);
+                    case ButtonReadMode.Up:
+                        return Input.GetKeyUp(anyKey);
+                    default:
+                        return Input.GetKey(anyKey);
+                }
             }
 
             int slot = GetLegacyJoystickSlotForPlayer(gamepadIndex);
@@ -290,7 +318,15 @@ namespace KeepBallMoving
             }
 
             KeyCode[] keys = button == GamepadButton.Primary ? LegacyPrimaryButtons : LegacyPhantomButtons;
-            return mode == ButtonReadMode.Down ? Input.GetKeyDown(keys[slot]) : Input.GetKeyUp(keys[slot]);
+            switch (mode)
+            {
+                case ButtonReadMode.Down:
+                    return Input.GetKeyDown(keys[slot]);
+                case ButtonReadMode.Up:
+                    return Input.GetKeyUp(keys[slot]);
+                default:
+                    return Input.GetKey(keys[slot]);
+            }
         }
 
         private static int GetLegacyJoystickSlotForPlayer(int playerIndex)
@@ -390,7 +426,15 @@ namespace KeepBallMoving
                 return false;
             }
 
-            return mode == ButtonReadMode.Down ? control.wasPressedThisFrame : control.wasReleasedThisFrame;
+            switch (mode)
+            {
+                case ButtonReadMode.Down:
+                    return control.wasPressedThisFrame;
+                case ButtonReadMode.Up:
+                    return control.wasReleasedThisFrame;
+                default:
+                    return control.isPressed;
+            }
         }
 
         private static ButtonControl GetButton(InputDevice device, GamepadButton button)

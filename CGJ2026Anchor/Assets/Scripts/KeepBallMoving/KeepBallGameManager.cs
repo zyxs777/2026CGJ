@@ -76,23 +76,25 @@ namespace KeepBallMoving
         [SerializeField] private int defenderPressurePlayerCount = 1;
         [SerializeField] private float pressureSideOffset = 0.7f;
         [SerializeField] private float defenderPressureBackOffset = 1.1f;
+        [SerializeField] private float kickoffPressureDelay = 1f;
         [SerializeField] private float redKickoffAutoHoldLockout = 1.2f;
         [SerializeField] private float redAutoHoldDelay = 0.55f;
         [SerializeField] private float redPassSpeed = 11.5f;
         [SerializeField] private float redReleaseSpeed = 13.5f;
 
         [Header("Stamina")]
-        [SerializeField] private float staminaRecoveryPerSecond = 35f;
-        [SerializeField] private float movementStaminaDrainPerSecond = 3f;
-        [SerializeField] private float dribbleStaminaDrainPerSecond = 8f;
-        [SerializeField] private float passChargeStaminaDrainPerSecond = 12f;
-        [SerializeField] private float passReleaseStaminaCost = 8f;
+        [SerializeField] private float nonHoldingStaminaRecoveryPerSecond = 10f;
+        [SerializeField] private float exhaustedExtraStaminaRecoveryPerSecond = 30f;
+        [SerializeField] private float movementStaminaDrainPerSecond = 0f;
+        [SerializeField] private float dribbleStaminaDrainPerSecond = 15f;  
+        [SerializeField] private float passChargeStaminaDrainPerSecond = 15f;
+        [SerializeField] private float passReleaseStaminaCost = 0f;
         [SerializeField] private float staminaExhaustedReleaseSpeed = 10f;
         [SerializeField] private float exhaustedMoveSpeedMultiplier;
         [SerializeField] private float skyGiantSizeMultiplier = 2f;
         [SerializeField] private float skyGiantMoveSpeedMultiplier = 0.45f;
-        [SerializeField] private float skyGiantShockwaveInterval = 1f;
-        [SerializeField] private float skyGiantShockwaveRadius = 2.8f;
+        [SerializeField] private float skyGiantShockwaveInterval = 2f;
+        [SerializeField] private float skyGiantShockwaveRadius = 2.5f;
         [SerializeField] private float skyGiantShockwavePushDistance = 1.8f;
 
         [Header("Red AI Difficulty")]
@@ -131,6 +133,16 @@ namespace KeepBallMoving
         [SerializeField] private float directionalControlHoldSpeedBonusPerStack = 0.25f;
         [SerializeField] private float directionalControlReleaseSpeedBonusPerStack = 0.12f;
         [SerializeField] private float directionalControlInputThreshold = 0.35f;
+        [SerializeField] private float dashPassDistance = 3f;
+        [SerializeField] private float dashPassDuration = 0.22f;
+
+        [Header("Talent Selection UI")]
+        [SerializeField] private Texture2D talentSelectionBackgroundTexture;
+        [SerializeField] private string talentSelectionBackgroundResourcePath = "KeepBallMoving/TalentSelectionBackground";
+        [SerializeField] private Color talentSelectionFallbackBackgroundColor = new Color(0.05f, 0.05f, 0.055f, 0.62f);
+        [SerializeField] private Sprite blueTalentSelectionMarkerSprite;
+        [SerializeField] private Sprite redTalentSelectionMarkerSprite;
+        [SerializeField] private string talentSelectionMarkerResourcePath = "KeepBallMoving/target";
 
         [Header("Goal Presentation")]
         [SerializeField, Range(0.05f, 1f)] private float goalSlowTimeScale = 0.18f;
@@ -181,15 +193,20 @@ namespace KeepBallMoving
         private Color goalBannerColor = Color.white;
         private float goalBannerUntilRealtime;
         private float autoControlCooldownUntil;
+        private float pressureAllowedAt;
         private float redCurrentHoldDelay;
         private bool blueHoldChargeArmed;
         private bool redHoldChargeArmed;
         private int bluePhantomPlayerUsesRemaining;
         private int redPhantomPlayerUsesRemaining;
+        private int blueDashPassUsesRemaining;
+        private int redDashPassUsesRemaining;
         private bool bluePhantomPlayerPassWindowActive;
         private bool redPhantomPlayerPassWindowActive;
         private PlayerAgent activePhantomPlayer;
         private Team activePhantomPlayerTeam = Team.Blue;
+        private Coroutine activeDashPassRoutine;
+        private bool dashPassActive;
         private PlayerAgent blueSkyGiantPlayer;
         private PlayerAgent redSkyGiantPlayer;
         private float blueSkyGiantNextShockwaveTime;
@@ -212,6 +229,8 @@ namespace KeepBallMoving
         private bool talentSecondPickPending;
         private string lastBlueTalentText = "暂无";
         private string lastRedTalentText = "暂无";
+        private int bluePickedTalentIndex = -1;
+        private int redPickedTalentIndex = -1;
 
         private Color fieldColor = new Color(0.08f, 0.42f, 0.19f, 1f);
         private Color lineColor = new Color(0.93f, 0.97f, 0.93f, 1f);
@@ -230,11 +249,14 @@ namespace KeepBallMoving
         private const string DefaultGoalEffectPrefabPath = "KeepBallMoving/GoalEffect";
         private const string DefaultFieldVisualPrefabPath = "KeepBallMoving/KeepBallField";
         private const string DefaultFieldSpritePath = "KeepBallMoving/BG2";
+        private const string DefaultTalentIconFolderPath = "KeepBallMoving/TalentIcons";
+        private const string DefaultRedTalentMarkerSpriteName = "target_0";
+        private const string DefaultBlueTalentMarkerSpriteName = "target_1";
         private const float TalentBadgeWidth = 246f;
         private const float TalentBadgeHeight = 44f;
         private const float TalentBadgeGap = 6f;
         private const int TalentChoiceCount = 3;
-        private const int TalentTypeCount = 11;
+        private const int TalentTypeCount = 12;
 
         private enum MatchMode
         {
@@ -254,7 +276,8 @@ namespace KeepBallMoving
             PassField,
             PhantomPlayer,
             DirectionalControl,
-            SkyGiant
+            SkyGiant,
+            DashPass
         }
 
         private struct TalentOption
@@ -303,6 +326,12 @@ namespace KeepBallMoving
 
             if (goalLocked)
             {
+                return;
+            }
+
+            if (dashPassActive)
+            {
+                UpdateControlHighlights();
                 return;
             }
 
@@ -467,6 +496,24 @@ namespace KeepBallMoving
                 KeepBallNewInput.IsLegacyPhantomDown(GetGamepadIndex(team), ShouldReadLegacyAnyGamepad(team));
         }
 
+        private bool IsPhantomActionHeld(Team team)
+        {
+            if (KeepBallNewInput.IsPhantomHeld(GetGamepadIndex(team), ShouldReadAnyGamepad(team)))
+            {
+                return true;
+            }
+
+            if (team == Team.Red)
+            {
+                return Input.GetKey(redPhantomKey) ||
+                    Input.GetKey(redAlternatePhantomKey) ||
+                    KeepBallNewInput.IsLegacyPhantomHeld(GetGamepadIndex(team), false);
+            }
+
+            return Input.GetKey(KeyCode.Z) ||
+                KeepBallNewInput.IsLegacyPhantomHeld(GetGamepadIndex(team), ShouldReadLegacyAnyGamepad(team));
+        }
+
         private int GetGamepadIndex(Team team)
         {
             return team == Team.Blue ? 0 : 1;
@@ -485,6 +532,11 @@ namespace KeepBallMoving
         private bool IsPvpMode()
         {
             return matchMode == MatchMode.Pvp;
+        }
+
+        private bool ShouldAutoPickTalentForTeam(Team team)
+        {
+            return team == Team.Red && !IsPvpMode();
         }
 
         private string GetMatchModeLabel()
@@ -751,11 +803,83 @@ namespace KeepBallMoving
             for (int i = 0; i < TalentTypeCount; i++)
             {
                 TalentId talentId = (TalentId)i;
-                talentIconSprites[i] = RuntimeSpriteFactory.CreateTalentIconSprite(
-                    $"KeepBall_TalentIcon_{talentId}",
-                    GetTalentColor(talentId),
-                    i);
+                Sprite resourceIcon = LoadTalentIconSprite(talentId);
+                talentIconSprites[i] = resourceIcon != null
+                    ? resourceIcon
+                    : RuntimeSpriteFactory.CreateTalentIconSprite(
+                        $"KeepBall_TalentIcon_{talentId}",
+                        GetTalentColor(talentId),
+                        i);
             }
+        }
+
+        private Sprite LoadTalentIconSprite(TalentId talentId)
+        {
+            string resourceName = talentId.ToString();
+            Sprite icon = Resources.Load<Sprite>($"{DefaultTalentIconFolderPath}/{resourceName}");
+            if (icon != null)
+            {
+                return icon;
+            }
+
+            return Resources.Load<Sprite>($"KeepBallMoving/{resourceName}");
+        }
+
+        private void LoadTalentSelectionMarkerSprites()
+        {
+            if (blueTalentSelectionMarkerSprite != null && redTalentSelectionMarkerSprite != null)
+            {
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(talentSelectionMarkerResourcePath))
+            {
+                return;
+            }
+
+            Sprite[] markerSprites = Resources.LoadAll<Sprite>(talentSelectionMarkerResourcePath);
+            if (markerSprites == null || markerSprites.Length == 0)
+            {
+                Sprite singleSprite = Resources.Load<Sprite>(talentSelectionMarkerResourcePath);
+                if (blueTalentSelectionMarkerSprite == null)
+                {
+                    blueTalentSelectionMarkerSprite = singleSprite;
+                }
+
+                if (redTalentSelectionMarkerSprite == null)
+                {
+                    redTalentSelectionMarkerSprite = singleSprite;
+                }
+
+                return;
+            }
+
+            Sprite redSprite = FindSpriteByName(markerSprites, DefaultRedTalentMarkerSpriteName);
+            Sprite blueSprite = FindSpriteByName(markerSprites, DefaultBlueTalentMarkerSpriteName);
+            if (redTalentSelectionMarkerSprite == null)
+            {
+                redTalentSelectionMarkerSprite = redSprite != null ? redSprite : markerSprites[0];
+            }
+
+            if (blueTalentSelectionMarkerSprite == null)
+            {
+                blueTalentSelectionMarkerSprite = blueSprite != null
+                    ? blueSprite
+                    : markerSprites[Mathf.Min(1, markerSprites.Length - 1)];
+            }
+        }
+
+        private Sprite FindSpriteByName(Sprite[] sprites, string spriteName)
+        {
+            for (int i = 0; i < sprites.Length; i++)
+            {
+                if (sprites[i] != null && sprites[i].name == spriteName)
+                {
+                    return sprites[i];
+                }
+            }
+
+            return null;
         }
 
         private void LoadDefaultPrefabs()
@@ -844,6 +968,20 @@ namespace KeepBallMoving
                 fieldSprite = Resources.Load<Sprite>(spritePath);
             }
 
+            if (talentSelectionBackgroundTexture == null && !string.IsNullOrWhiteSpace(talentSelectionBackgroundResourcePath))
+            {
+                talentSelectionBackgroundTexture = Resources.Load<Texture2D>(talentSelectionBackgroundResourcePath);
+                if (talentSelectionBackgroundTexture == null)
+                {
+                    Sprite backgroundSprite = Resources.Load<Sprite>(talentSelectionBackgroundResourcePath);
+                    if (backgroundSprite != null)
+                    {
+                        talentSelectionBackgroundTexture = backgroundSprite.texture;
+                    }
+                }
+            }
+
+            LoadTalentSelectionMarkerSprites();
         }
 
         private void SetupCamera()
@@ -1381,10 +1519,14 @@ namespace KeepBallMoving
             SetHoldChargeArmed(Team.Red, false);
             bluePhantomPlayerUsesRemaining = HasTalent(Team.Blue, TalentId.PhantomPlayer) ? 1 : 0;
             redPhantomPlayerUsesRemaining = HasTalent(Team.Red, TalentId.PhantomPlayer) ? 1 : 0;
+            blueDashPassUsesRemaining = HasTalent(Team.Blue, TalentId.DashPass) ? 1 : 0;
+            redDashPassUsesRemaining = HasTalent(Team.Red, TalentId.DashPass) ? 1 : 0;
             bluePhantomPlayerPassWindowActive = false;
             redPhantomPlayerPassWindowActive = false;
             redCurrentHoldDelay = redAutoHoldDelay;
             autoControlCooldownUntil = Time.time + redKickoffAutoHoldLockout;
+            pressureAllowedAt = Time.time + Mathf.Max(0f, kickoffPressureDelay);
+            StopActiveDashPass();
             DestroyActivePhantomPlayer();
             ClearPhantomBalls();
             ClearKickoffLock();
@@ -1479,6 +1621,12 @@ namespace KeepBallMoving
             Team releaseTeam = holder != null ? holder.Team : Team.Blue;
             float charge01 = Mathf.Clamp01(chargeTime / maxChargeTime);
             float releaseSpeed = Mathf.Lerp(minReleaseSpeed, maxReleaseSpeed, charge01) * GetDirectionalControlReleaseMultiplier(releaseTeam);
+            Vector2 plannedDirection = GetHeldBallReleaseDirection(holder);
+            if (TryStartDashPass(holder, releaseTeam, plannedDirection, releaseSpeed, charge01))
+            {
+                return;
+            }
+
             Vector2 releaseDirection = ball.Release(releaseSpeed);
             ConsumePassReleaseStamina(holder);
             ClearKickoffLockIfHolder(holder);
@@ -1514,6 +1662,105 @@ namespace KeepBallMoving
             SetHoldChargeArmed(Team.Blue, false);
             SetHoldChargeArmed(Team.Red, false);
             autoControlCooldownUntil = Time.time + 0.45f;
+        }
+
+        private Vector2 GetHeldBallReleaseDirection(PlayerAgent holder)
+        {
+            if (holder == null || ball == null)
+            {
+                return Vector2.right;
+            }
+
+            Vector2 direction = ball.Position - holder.Position;
+            if (direction.sqrMagnitude < 0.001f)
+            {
+                direction = holder.Team == Team.Red ? Vector2.left : Vector2.right;
+            }
+
+            return direction.normalized;
+        }
+
+        private bool TryStartDashPass(PlayerAgent holder, Team team, Vector2 releaseDirection, float releaseSpeed, float charge01)
+        {
+            if (holder == null || ball == null || ball.State != BallState.Held || dashPassActive)
+            {
+                return false;
+            }
+
+            if (!HasTalent(team, TalentId.DashPass) || GetDashPassUsesRemaining(team) <= 0 || !IsPhantomActionHeld(team))
+            {
+                return false;
+            }
+
+            if (releaseDirection.sqrMagnitude < 0.001f)
+            {
+                releaseDirection = team == Team.Red ? Vector2.left : Vector2.right;
+            }
+
+            SetDashPassUsesRemaining(team, 0);
+            SetPhantomPlayerPassWindowActive(Team.Blue, false);
+            SetPhantomPlayerPassWindowActive(Team.Red, false);
+            SetHoldChargeArmed(Team.Blue, false);
+            SetHoldChargeArmed(Team.Red, false);
+            ClearKickoffLockIfHolder(holder);
+            chargeTime = 0f;
+
+            activeDashPassRoutine = StartCoroutine(DashPassRoutine(holder, team, releaseDirection.normalized, releaseSpeed, charge01));
+            return true;
+        }
+
+        private IEnumerator DashPassRoutine(PlayerAgent holder, Team team, Vector2 releaseDirection, float releaseSpeed, float charge01)
+        {
+            dashPassActive = true;
+            ball.FreezeHeldAtCurrentPosition();
+            holder.SetHoldingAnimation(false);
+            holder.SetCatchHighlighted(true);
+
+            Vector2 startPosition = holder.Position;
+            Vector2 targetPosition = ClampInsideField(startPosition + releaseDirection.normalized * Mathf.Max(0f, dashPassDistance));
+            float duration = Mathf.Max(0.01f, dashPassDuration);
+            float elapsed = 0f;
+
+            ShowMessage($"{GetTeamLabel(team)}突进传球！");
+
+            while (elapsed < duration && holder != null && ball != null && ball.State == BallState.Held && ball.Holder == holder && !goalLocked)
+            {
+                elapsed += Time.deltaTime;
+                float t = Mathf.Clamp01(elapsed / duration);
+                float easedT = 1f - (1f - t) * (1f - t);
+                holder.MoveTo(ClampInsideField(Vector2.Lerp(startPosition, targetPosition, easedT)));
+                yield return null;
+            }
+
+            if (holder != null && ball != null && ball.State == BallState.Held && ball.Holder == holder && !goalLocked)
+            {
+                Vector2 origin = ball.Position;
+                Vector2 actualDirection = ball.ReleaseInDirectionFromCurrent(releaseDirection, releaseSpeed);
+                ConsumePassReleaseStamina(holder);
+                ApplyReleaseTalents(team, origin, actualDirection, releaseSpeed);
+                if (GetPhantomPlayerUsesRemaining(team) > 0 && HasTalent(team, TalentId.PhantomPlayer))
+                {
+                    SetPhantomPlayerPassWindowActive(team, true);
+                }
+
+                ShowMessage(charge01 >= 0.95f ? "突进爆射！" : "突进传球！");
+            }
+
+            dashPassActive = false;
+            activeDashPassRoutine = null;
+            autoControlCooldownUntil = Time.time + 0.35f;
+            UpdateControlHighlights();
+        }
+
+        private void StopActiveDashPass()
+        {
+            if (activeDashPassRoutine != null)
+            {
+                StopCoroutine(activeDashPassRoutine);
+                activeDashPassRoutine = null;
+            }
+
+            dashPassActive = false;
         }
 
         private bool TryActivatePhantomPlayer(Team team)
@@ -1845,7 +2092,7 @@ namespace KeepBallMoving
 
             if (IsSkyGiant(holder))
             {
-                holder.TickStamina(deltaTime, 0f, staminaRecoveryPerSecond);
+                holder.TickStamina(deltaTime, 0f, 0f);
                 return false;
             }
 
@@ -1856,7 +2103,7 @@ namespace KeepBallMoving
                 drain += passChargeStaminaDrainPerSecond;
             }
 
-            holder.TickStamina(deltaTime, drain, staminaRecoveryPerSecond);
+            holder.TickStamina(deltaTime, drain, 0f);
             if (!wasExhausted && holder.IsStaminaExhausted && ball != null && ball.State == BallState.Held && ball.Holder == holder)
             {
                 ReleaseHeldBallOnStaminaExhausted(holder);
@@ -2126,7 +2373,7 @@ namespace KeepBallMoving
         {
             PlayerAgent holder = ball.Holder;
 
-            if (ball.State == BallState.Held && holder != null && holder.Team != team)
+            if (Time.time >= pressureAllowedAt && ball.State == BallState.Held && holder != null && holder.Team != team)
             {
                 List<PlayerAgent> players = team == Team.Blue ? bluePlayers : redPlayers;
                 int holderRank = GetDistanceRank(player, players, holder.Position);
@@ -2223,13 +2470,13 @@ namespace KeepBallMoving
             if (kickoffPlayerLocked && player == lockedKickoffPlayer)
             {
                 player.MoveTo(lockedKickoffPosition);
-                player.TickStamina(deltaTime, 0f, staminaRecoveryPerSecond);
+                player.TickStamina(deltaTime, 0f, GetNonHoldingStaminaRecovery(player));
                 return;
             }
 
             if (player.IsKnockbackActive)
             {
-                player.TickStamina(deltaTime, 0f, staminaRecoveryPerSecond);
+                player.TickStamina(deltaTime, 0f, GetNonHoldingStaminaRecovery(player));
                 return;
             }
 
@@ -2258,11 +2505,27 @@ namespace KeepBallMoving
             player.MoveTo(ClampInsideField(next));
             bool moved = Vector2.SqrMagnitude(next - current) > 0.000001f;
             float movementDrain = !isSkyGiant && !player.IsStaminaExhausted && moved ? movementStaminaDrainPerSecond : 0f;
-            player.TickStamina(deltaTime, movementDrain, staminaRecoveryPerSecond);
+            player.TickStamina(deltaTime, movementDrain, GetNonHoldingStaminaRecovery(player));
             if (isSkyGiant && moved)
             {
                 TryTriggerSkyGiantShockwave(player);
             }
+        }
+
+        private float GetNonHoldingStaminaRecovery(PlayerAgent player)
+        {
+            if (ball != null && ball.State == BallState.Held && ball.Holder == player)
+            {
+                return 0f;
+            }
+
+            float recovery = nonHoldingStaminaRecoveryPerSecond;
+            if (player != null && player.IsStaminaExhausted)
+            {
+                recovery += exhaustedExtraStaminaRecoveryPerSecond;
+            }
+
+            return recovery;
         }
 
         private float GetExhaustedMoveSpeed()
@@ -2491,8 +2754,11 @@ namespace KeepBallMoving
 
             bluePhantomPlayerUsesRemaining = 0;
             redPhantomPlayerUsesRemaining = 0;
+            blueDashPassUsesRemaining = 0;
+            redDashPassUsesRemaining = 0;
             bluePhantomPlayerPassWindowActive = false;
             redPhantomPlayerPassWindowActive = false;
+            StopActiveDashPass();
             ClearKickoffLock();
             DestroyActivePhantomPlayer();
 
@@ -2677,6 +2943,13 @@ namespace KeepBallMoving
             talentSecondPickPending = false;
             GenerateTalentChoices();
             talentSelectionOpen = true;
+
+            if (ShouldAutoPickTalentForTeam(currentTalentPickingTeam))
+            {
+                AutoPickFirstTalentForAi();
+                return;
+            }
+
             ShowMessage($"{GetTeamLabel(currentTalentPickingTeam)}先选择天赋");
         }
 
@@ -2690,6 +2963,8 @@ namespace KeepBallMoving
         {
             selectedTalentIndex = 0;
             nextTalentMoveInputTime = 0f;
+            bluePickedTalentIndex = -1;
+            redPickedTalentIndex = -1;
             for (int i = 0; i < talentOptionTaken.Length; i++)
             {
                 talentOptionTaken[i] = false;
@@ -2706,7 +2981,8 @@ namespace KeepBallMoving
                 TalentId.PassField,
                 TalentId.PhantomPlayer,
                 TalentId.DirectionalControl,
-                TalentId.SkyGiant
+                TalentId.SkyGiant,
+                TalentId.DashPass
             };
             List<TalentId> availablePool = new List<TalentId>();
             foreach (TalentId talentId in pool)
@@ -2822,6 +3098,14 @@ namespace KeepBallMoving
                         Description = "每轮开局随机一个己方球员变得巨大，不会疲惫，但移动速度明显降低。移动时每隔 1 秒产生和体积挂钩的立场冲击波。最多 1 层。",
                         AccentColor = new Color(1f, 0.78f, 0.28f, 1f)
                     };
+                case TalentId.DashPass:
+                    return new TalentOption
+                    {
+                        Id = id,
+                        Name = "突进传球",
+                        Description = "每轮限 1 次。球员蓄力传球时按住 Z/B，松开传球键后会先沿传球方向突进一段距离，足球停在原地，突进结束后再踢出。",
+                        AccentColor = new Color(0.45f, 1f, 0.58f, 1f)
+                    };
                 default:
                     return new TalentOption
                     {
@@ -2848,6 +3132,7 @@ namespace KeepBallMoving
             }
 
             TalentOption pickedTalent = currentTalentOptions[index];
+            SetPickedTalentIndex(currentTalentPickingTeam, index);
             bool gained = ApplyTalent(currentTalentPickingTeam, pickedTalent);
             string gainedText = gained ? pickedTalent.Name : $"{pickedTalent.Name}已满";
             if (currentTalentPickingTeam == Team.Blue)
@@ -2884,6 +3169,69 @@ namespace KeepBallMoving
             ResetRound();
         }
 
+        private void AutoPickFirstTalentForAi()
+        {
+            Team autoTeam = currentTalentPickingTeam;
+            int pickedIndex = FindRandomSelectableTalentIndex(autoTeam);
+            if (pickedIndex < 0)
+            {
+                talentSecondPickPending = true;
+                currentTalentPickingTeam = talentSecondPickTeam;
+                selectedTalentIndex = FindFirstSelectableTalentIndex(currentTalentPickingTeam);
+                if (selectedTalentIndex < 0)
+                {
+                    talentSelectionOpen = false;
+                    talentSecondPickPending = false;
+                    ShowMessage("双方都没有可选天赋");
+                    ResetRound();
+                    return;
+                }
+
+                ShowMessage($"{GetTeamLabel(autoTeam)}没有可选天赋；{GetTeamLabel(currentTalentPickingTeam)}选择天赋");
+                return;
+            }
+
+            TalentOption pickedTalent = currentTalentOptions[pickedIndex];
+            SetPickedTalentIndex(autoTeam, pickedIndex);
+            bool gained = ApplyTalent(autoTeam, pickedTalent);
+            string gainedText = gained ? pickedTalent.Name : $"{pickedTalent.Name}已满";
+            if (autoTeam == Team.Blue)
+            {
+                lastBlueTalentText = gainedText;
+            }
+            else
+            {
+                lastRedTalentText = gainedText;
+            }
+
+            talentOptionTaken[pickedIndex] = true;
+            talentSecondPickPending = true;
+            currentTalentPickingTeam = talentSecondPickTeam;
+            selectedTalentIndex = FindFirstSelectableTalentIndex(currentTalentPickingTeam);
+            if (selectedTalentIndex < 0)
+            {
+                talentSelectionOpen = false;
+                talentSecondPickPending = false;
+                ShowMessage($"{GetTeamLabel(currentTalentPickingTeam)}没有可选的剩余天赋");
+                ResetRound();
+                return;
+            }
+
+            ShowMessage($"{GetTeamLabel(autoTeam)}随机获得：{gainedText}；{GetTeamLabel(currentTalentPickingTeam)}从剩余天赋中选择");
+        }
+
+        private void SetPickedTalentIndex(Team team, int index)
+        {
+            if (team == Team.Blue)
+            {
+                bluePickedTalentIndex = index;
+            }
+            else
+            {
+                redPickedTalentIndex = index;
+            }
+        }
+
         private bool CanSelectTalentOption(int index, Team team)
         {
             return index >= 0 &&
@@ -2903,6 +3251,25 @@ namespace KeepBallMoving
             }
 
             return -1;
+        }
+
+        private int FindRandomSelectableTalentIndex(Team team)
+        {
+            List<int> selectableIndices = new List<int>();
+            for (int i = 0; i < currentTalentOptions.Length; i++)
+            {
+                if (CanSelectTalentOption(i, team))
+                {
+                    selectableIndices.Add(i);
+                }
+            }
+
+            if (selectableIndices.Count == 0)
+            {
+                return -1;
+            }
+
+            return selectableIndices[Random.Range(0, selectableIndices.Count)];
         }
 
         private bool ApplyTalent(Team team, TalentOption talent)
@@ -3315,6 +3682,7 @@ namespace KeepBallMoving
                 case TalentId.ExtraMidfielder:
                 case TalentId.ExtraDefender:
                 case TalentId.SkyGiant:
+                case TalentId.DashPass:
                     return 1;
                 case TalentId.PhantomPlayer:
                     return 1;
@@ -3421,6 +3789,8 @@ namespace KeepBallMoving
                     return "变向控球";
                 case TalentId.SkyGiant:
                     return "天降巨人";
+                case TalentId.DashPass:
+                    return "突进传球";
                 default:
                     return "香蕉球";
             }
@@ -3450,6 +3820,8 @@ namespace KeepBallMoving
                     return new Color(1f, 0.42f, 0.72f, 1f);
                 case TalentId.SkyGiant:
                     return new Color(1f, 0.78f, 0.28f, 1f);
+                case TalentId.DashPass:
+                    return new Color(0.45f, 1f, 0.58f, 1f);
                 default:
                     return new Color(1f, 0.9f, 0.2f, 1f);
             }
@@ -3507,6 +3879,23 @@ namespace KeepBallMoving
             else
             {
                 redPhantomPlayerUsesRemaining = uses;
+            }
+        }
+
+        private int GetDashPassUsesRemaining(Team team)
+        {
+            return team == Team.Blue ? blueDashPassUsesRemaining : redDashPassUsesRemaining;
+        }
+
+        private void SetDashPassUsesRemaining(Team team, int uses)
+        {
+            if (team == Team.Blue)
+            {
+                blueDashPassUsesRemaining = uses;
+            }
+            else
+            {
+                redDashPassUsesRemaining = uses;
             }
         }
 
@@ -3672,7 +4061,7 @@ namespace KeepBallMoving
 
         private void DrawTalentSelection()
         {
-            DrawFilledRect(new Rect(0f, 0f, Screen.width, Screen.height), new Color(0.05f, 0.05f, 0.055f, 0.62f));
+            DrawTalentSelectionBackground();
 
             GUIStyle titleStyle = new GUIStyle(GUI.skin.label)
             {
@@ -3737,6 +4126,7 @@ namespace KeepBallMoving
                 }
 
                 DrawTalentCard(cardRect, option, cardTitleStyle, descriptionStyle, i == selectedTalentIndex, talentOptionTaken[i], selectable, currentTalentPickingTeam);
+                DrawTalentSelectionMarkers(cardRect, i, i == selectedTalentIndex, selectable);
 
                 if (Event.current.type == EventType.MouseUp && cardRect.Contains(Event.current.mousePosition))
                 {
@@ -3744,6 +4134,18 @@ namespace KeepBallMoving
                     Event.current.Use();
                 }
             }
+        }
+
+        private void DrawTalentSelectionBackground()
+        {
+            Rect screenRect = new Rect(0f, 0f, Screen.width, Screen.height);
+            if (talentSelectionBackgroundTexture != null)
+            {
+                GUI.DrawTexture(screenRect, talentSelectionBackgroundTexture, ScaleMode.ScaleAndCrop, true);
+                return;
+            }
+
+            DrawFilledRect(screenRect, talentSelectionFallbackBackgroundColor);
         }
 
         private void DrawTalentCard(Rect cardRect, TalentOption option, GUIStyle titleStyle, GUIStyle descriptionStyle, bool selected, bool taken, bool selectable, Team viewingTeam)
@@ -3763,8 +4165,10 @@ namespace KeepBallMoving
             Rect iconRect = new Rect(cardRect.x + 16f, cardRect.y + 54f, cardRect.width - 32f, 142f);
             DrawFilledRect(iconRect, Color.black);
             DrawBorder(iconRect, new Color(0.02f, 0.025f, 0.035f, 1f), 3f);
-            DrawTalentIcon(iconRect, option);
-            DrawIconPlaceholderLabel(iconRect);
+            if (!DrawTalentIcon(iconRect, option))
+            {
+                DrawIconPlaceholderLabel(iconRect);
+            }
 
             Rect descriptionRect = new Rect(cardRect.x + 16f, cardRect.y + 208f, cardRect.width - 32f, 122f);
             string description = $"{option.Description}\n\n{GetTeamLabel(viewingTeam)}当前拥有：{GetTalentCount(viewingTeam, option.Id)} / {GetTalentMaxCount(option.Id)}";
@@ -3787,6 +4191,61 @@ namespace KeepBallMoving
             }
         }
 
+        private void DrawTalentSelectionMarkers(Rect cardRect, int cardIndex, bool selected, bool selectable)
+        {
+            bool showBlueMarker = bluePickedTalentIndex == cardIndex;
+            bool showRedMarker = redPickedTalentIndex == cardIndex;
+            if (!showBlueMarker && !showRedMarker && selected && selectable)
+            {
+                if (currentTalentPickingTeam == Team.Blue)
+                {
+                    showBlueMarker = true;
+                }
+                else
+                {
+                    showRedMarker = true;
+                }
+            }
+
+            int markerCount = (showBlueMarker ? 1 : 0) + (showRedMarker ? 1 : 0);
+            if (markerCount == 0)
+            {
+                return;
+            }
+
+            float markerWidth = 84f;
+            float markerHeight = 74f;
+            float gap = 6f;
+            float totalWidth = markerCount * markerWidth + (markerCount - 1) * gap;
+            float startX = cardRect.center.x - totalWidth * 0.5f;
+            float markerY = Mathf.Max(96f, cardRect.y - markerHeight + 10f);
+            int markerIndex = 0;
+            if (showRedMarker)
+            {
+                DrawTalentSelectionMarker(new Rect(startX + markerIndex * (markerWidth + gap), markerY, markerWidth, markerHeight), Team.Red);
+                markerIndex++;
+            }
+
+            if (showBlueMarker)
+            {
+                DrawTalentSelectionMarker(new Rect(startX + markerIndex * (markerWidth + gap), markerY, markerWidth, markerHeight), Team.Blue);
+            }
+        }
+
+        private void DrawTalentSelectionMarker(Rect markerRect, Team team)
+        {
+            Sprite markerSprite = team == Team.Blue ? blueTalentSelectionMarkerSprite : redTalentSelectionMarkerSprite;
+            DrawFilledRect(new Rect(markerRect.x + 5f, markerRect.y + 7f, markerRect.width - 10f, markerRect.height - 10f), new Color(0f, 0f, 0f, 0.28f));
+            if (markerSprite != null)
+            {
+                DrawSprite(markerRect, markerSprite);
+                return;
+            }
+
+            Color fallbackColor = team == Team.Blue ? new Color(0.18f, 0.52f, 1f, 1f) : new Color(1f, 0.16f, 0.12f, 1f);
+            DrawFilledRect(new Rect(markerRect.x + markerRect.width * 0.22f, markerRect.y + markerRect.height * 0.2f, markerRect.width * 0.56f, markerRect.height * 0.56f), fallbackColor);
+        }
+
         private void DrawIconPlaceholderLabel(Rect iconRect)
         {
             GUIStyle iconStyle = new GUIStyle(GUI.skin.label)
@@ -3800,8 +4259,15 @@ namespace KeepBallMoving
             GUI.Label(new Rect(iconRect.x + 8f, iconRect.yMax - 28f, iconRect.width - 16f, 20f), "ICON", iconStyle);
         }
 
-        private void DrawTalentIcon(Rect iconRect, TalentOption option)
+        private bool DrawTalentIcon(Rect iconRect, TalentOption option)
         {
+            Sprite iconSprite = GetTalentIconSprite(option.Id);
+            if (iconSprite != null)
+            {
+                DrawSprite(iconRect, iconSprite);
+                return true;
+            }
+
             switch (option.Id)
             {
                 case TalentId.PhantomFootball:
@@ -3854,6 +4320,13 @@ namespace KeepBallMoving
                     DrawFilledRect(new Rect(iconRect.center.x + 12f, iconRect.yMax - 42f, 22f, 34f), option.AccentColor);
                     DrawFilledRect(new Rect(iconRect.x + 34f, iconRect.y + 20f, iconRect.width - 68f, 5f), new Color(1f, 1f, 1f, 0.42f));
                     break;
+                case TalentId.DashPass:
+                    DrawFilledRect(new Rect(iconRect.x + 38f, iconRect.center.y - 4f, iconRect.width - 92f, 8f), new Color(option.AccentColor.r, option.AccentColor.g, option.AccentColor.b, 0.55f));
+                    DrawFilledRect(new Rect(iconRect.xMax - 74f, iconRect.center.y - 20f, 34f, 40f), option.AccentColor);
+                    DrawFilledRect(new Rect(iconRect.xMax - 48f, iconRect.center.y - 34f, 12f, 68f), option.AccentColor);
+                    DrawBorder(new Rect(iconRect.x + 44f, iconRect.center.y - 40f, 80f, 80f), new Color(option.AccentColor.r, option.AccentColor.g, option.AccentColor.b, 0.45f), 4f);
+                    DrawFilledRect(new Rect(iconRect.x + 66f, iconRect.center.y - 18f, 36f, 36f), new Color(1f, 1f, 1f, 0.86f));
+                    break;
                 default:
                     for (int i = 0; i < 6; i++)
                     {
@@ -3866,6 +4339,48 @@ namespace KeepBallMoving
                     DrawFilledRect(new Rect(iconRect.xMax - 56f, iconRect.yMax - 56f, 4f, 26f), new Color(option.AccentColor.r, option.AccentColor.g, option.AccentColor.b, 0.65f));
                     break;
             }
+
+            return true;
+        }
+
+        private Sprite GetTalentIconSprite(TalentId talentId)
+        {
+            int index = (int)talentId;
+            return index >= 0 && index < talentIconSprites.Length ? talentIconSprites[index] : null;
+        }
+
+        private void DrawSprite(Rect rect, Sprite sprite)
+        {
+            if (sprite == null || sprite.texture == null)
+            {
+                return;
+            }
+
+            Rect textureRect = sprite.textureRect;
+            Rect texCoords = new Rect(
+                textureRect.x / sprite.texture.width,
+                textureRect.y / sprite.texture.height,
+                textureRect.width / sprite.texture.width,
+                textureRect.height / sprite.texture.height);
+
+            Rect paddedRect = new Rect(rect.x + 18f, rect.y + 12f, rect.width - 36f, rect.height - 24f);
+            float spriteWidth = Mathf.Max(1f, textureRect.width);
+            float spriteHeight = Mathf.Max(1f, textureRect.height);
+            float spriteAspect = spriteWidth / spriteHeight;
+            float rectAspect = paddedRect.width / Mathf.Max(1f, paddedRect.height);
+            Rect drawRect = paddedRect;
+            if (spriteAspect > rectAspect)
+            {
+                float height = paddedRect.width / spriteAspect;
+                drawRect = new Rect(paddedRect.x, paddedRect.center.y - height * 0.5f, paddedRect.width, height);
+            }
+            else
+            {
+                float width = paddedRect.height * spriteAspect;
+                drawRect = new Rect(paddedRect.center.x - width * 0.5f, paddedRect.y, width, paddedRect.height);
+            }
+
+            GUI.DrawTextureWithTexCoords(drawRect, sprite.texture, texCoords, true);
         }
 
         private void DrawFilledRect(Rect rect, Color color)

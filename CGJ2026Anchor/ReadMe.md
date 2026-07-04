@@ -301,6 +301,8 @@ hold：持球时为 true；不持球时为 false
 
 球员内置体力值，默认不外显 UI。移动、持球运球、蓄力传球和出球都会消耗体力；持球时如果体力刚好耗尽，会立刻按当前方向强制出球。体力耗尽后，球员进入恢复期，移动速度降为 0，但接球、抢断、持球绕圈、蓄力和出球都不受影响。恢复期会显示 `TiredEffect.prefab` 特效，体力恢复满后关闭特效并恢复正常移动。重新发球或重新开始时，球员回到阵型位置并恢复满体力。
 
+球员不持球且本帧没有体力消耗时，会按 `nonHoldingStaminaRecoveryPerSecond` 缓慢恢复体力，默认每秒恢复 10。进入疲劳状态后会额外按 `exhaustedExtraStaminaRecoveryPerSecond` 恢复，默认额外 30，也就是疲劳时默认总恢复 40 / 秒。持球状态不会恢复体力。
+
 球员颜色也在球员预制体的 `PlayerAgent` 上调：
 
 ```text
@@ -337,11 +339,11 @@ PVP：蓝方玩家控制，红方玩家控制。
 ```text
 蓝方空格：抓球 / 开始蓄力 / 确认踢出幻影球员持有的球
 蓝方松开空格：释放足球
-蓝方 Z：拥有幻影球员天赋后，在当前传球窗口中生成幻影球员
+蓝方 Z：拥有幻影球员天赋后，在当前传球窗口中生成幻影球员；拥有突进传球天赋后，蓄力传球时按住 Z 再松开空格会触发突进传球
 拥有变向控球天赋时，持球后 A/D 或左右方向键：改变足球绕行方向
 红方 Enter 或右 Ctrl：PVP 下抓球 / 开始蓄力 / 确认踢出幻影球员持有的球
 红方松开 Enter 或右 Ctrl：PVP 下释放足球
-红方右 Shift 或 /：PVP 下生成幻影球员
+红方右 Shift 或 /：PVP 下生成幻影球员；拥有突进传球天赋后，蓄力传球时按住右 Shift 或 / 再松开出球键会触发突进传球
 M：切换 PVE / PVP 并重新开始
 F2：显示 / 隐藏手柄输入调试面板
 R：重置当前回合
@@ -354,9 +356,9 @@ N：重新开始比赛并清空天赋
 
 ```text
 手柄1 A：蓝方抓球 / 蓄力 / 释放 / 确认蓝方天赋
-手柄1 B：蓝方召唤幻影球员
+手柄1 B：蓝方召唤幻影球员；蓄力传球时按住 B 可触发突进传球
 手柄2 A：PVP 下红方抓球 / 蓄力 / 释放 / 确认红方天赋
-手柄2 B：PVP 下红方召唤幻影球员
+手柄2 B：PVP 下红方召唤幻影球员；蓄力传球时按住 B 可触发突进传球
 手柄1 左右摇杆：蓝方选择天赋
 手柄2 左右摇杆：红方选择天赋
 拥有变向控球天赋时，持球后左摇杆左右：改变足球绕行方向
@@ -489,6 +491,7 @@ PVP 模式下，红方 AI 自动接球和自动出球不会执行，但红方球
 | 幻影球员 | 1 | 己方传球后可按 Z/B 在球所在位置生成幻影球员；每次进球后的新一轮最多使用 1 次。 |
 | 变向控球 | 3 | 接球后可用 A/D、左右方向键或左摇杆左右改变足球绕行方向；每层提高持球球速和出球速度。 |
 | 天降巨人 | 1 | 每轮开局随机 1 个己方球员变得巨大，身体和接球范围同步扩大，不会疲惫；移动速度明显降低，移动时每隔 1 秒产生和体积挂钩的立场冲击波。 |
+| 突进传球 | 1 | 每轮限 1 次。蓄力传球时按住 Z/B 再松开出球键，球员会先沿传球方向突进，足球停在原地，突进结束后再踢出。 |
 
 香蕉球暂时保留枚举和曲线代码，但当前不在可选天赋池中。
 
@@ -591,6 +594,7 @@ KeepBallPhantomPlayer.prefab
 KeepBallTalentBadge.prefab
 GoalEffect.prefab
 TiredEffect.prefab
+TalentIcons/
 ```
 
 用途：
@@ -607,8 +611,37 @@ TiredEffect.prefab
 - `KeepBallTalentBadge.prefab`：左右下角天赋条目 UI 预制体。
 - `GoalEffect.prefab`：进球瞬间生成在破门位置的世界特效。
 - `TiredEffect.prefab`：球员体力归零进入恢复期时显示在球员身上的疲劳特效。
+- `TalentIcons/`：天赋图标资源目录，图标文件名需要和天赋枚举名一致。
+- `TalentSelectionBackground.png`：三选一天赋界面的 OnGUI 全屏背景图，可选。
 
 如果 Inspector 中没有手动指定，`KeepBallGameManager` 会从 Resources 自动加载默认预制体。
+
+天赋图标加载规则：
+
+```text
+Assets/Resources/KeepBallMoving/TalentIcons/PhantomFootball.png
+Assets/Resources/KeepBallMoving/TalentIcons/BigfootForward.png
+Assets/Resources/KeepBallMoving/TalentIcons/BananaBall.png
+Assets/Resources/KeepBallMoving/TalentIcons/ExtraForward.png
+Assets/Resources/KeepBallMoving/TalentIcons/ExtraMidfielder.png
+Assets/Resources/KeepBallMoving/TalentIcons/ExtraDefender.png
+Assets/Resources/KeepBallMoving/TalentIcons/ShieldField.png
+Assets/Resources/KeepBallMoving/TalentIcons/PassField.png
+Assets/Resources/KeepBallMoving/TalentIcons/PhantomPlayer.png
+Assets/Resources/KeepBallMoving/TalentIcons/DirectionalControl.png
+Assets/Resources/KeepBallMoving/TalentIcons/SkyGiant.png
+Assets/Resources/KeepBallMoving/TalentIcons/DashPass.png
+```
+
+代码会优先按 `KeepBallMoving/TalentIcons/{TalentId}` 加载 Sprite。如果没有对应资源，会 fallback 到 `KeepBallMoving/{TalentId}`，最后再 fallback 到运行时生成的默认图标。
+
+三选一背景图加载规则：
+
+```text
+Assets/Resources/KeepBallMoving/TalentSelectionBackground.png
+```
+
+`KeepBallGameManager` 会按 `talentSelectionBackgroundResourcePath` 加载 `Texture2D`，默认路径是 `KeepBallMoving/TalentSelectionBackground`。如果没有资源，也没有在 Inspector 手动指定 `talentSelectionBackgroundTexture`，就使用 `talentSelectionFallbackBackgroundColor` 画原来的半透明背景。
 
 ## 6. 常用调参位置
 
@@ -677,6 +710,7 @@ redReleaseSpeed
 - `defenderPressurePlayerCount`：对方持球时，额外有多少名后卫前顶参与逼抢。
 - `pressureSideOffset`：多名球员压迫时在持球人上下两侧错开的距离。
 - `defenderPressureBackOffset`：后卫逼抢时站在持球人和自家球门之间的横向偏移。
+- `kickoffPressureDelay`：每轮开球后延迟多少秒才允许进入逼抢压迫逻辑，默认 1 秒。
 
 ### 6.3 体力参数
 
@@ -689,7 +723,8 @@ maxStamina
 `KeepBallGameManager` 上可调：
 
 ```csharp
-staminaRecoveryPerSecond
+nonHoldingStaminaRecoveryPerSecond
+exhaustedExtraStaminaRecoveryPerSecond
 movementStaminaDrainPerSecond
 dribbleStaminaDrainPerSecond
 passChargeStaminaDrainPerSecond
@@ -704,6 +739,8 @@ exhaustedMoveSpeedMultiplier
 - `dribbleStaminaDrainPerSecond`：持球时足球绕身运转持续消耗。
 - `passChargeStaminaDrainPerSecond`：蓄力传球或 AI 持球准备出球时持续消耗。
 - `passReleaseStaminaCost`：真正出球瞬间额外消耗。
+- `nonHoldingStaminaRecoveryPerSecond`：球员不持球且本帧没有体力消耗时的恢复速度，默认每秒 10。
+- `exhaustedExtraStaminaRecoveryPerSecond`：球员处于疲劳状态时的额外恢复速度，默认每秒 30；因此疲劳时默认总恢复速度是 40 / 秒。
 - `staminaExhaustedReleaseSpeed`：持球时体力刚好耗尽触发强制出球的基础速度。
 - `exhaustedMoveSpeedMultiplier`：体力为 0 时使用“最低正常移速”的倍率，默认 0，也就是恢复期不移动。
 - 体力为 0 后仍可接球、抢断、持球绕圈、蓄力和出球，只是移动速度降为 0；体力恢复满后恢复正常移速。
@@ -788,7 +825,17 @@ skyGiantShockwaveRadius
 skyGiantShockwavePushDistance
 ```
 
-### 6.9 预制体字段
+### 6.9 三选一界面 OnGUI 背景
+
+```csharp
+talentSelectionBackgroundTexture
+talentSelectionBackgroundResourcePath
+talentSelectionFallbackBackgroundColor
+```
+
+`talentSelectionBackgroundTexture` 可以在 Inspector 里直接拖 `Texture2D`。如果为空，会从 `talentSelectionBackgroundResourcePath` 加载 Resources 图片，默认是 `Assets/Resources/KeepBallMoving/TalentSelectionBackground.png`。如果仍为空，则使用 `talentSelectionFallbackBackgroundColor`。
+
+### 6.10 预制体字段
 
 ```csharp
 bluePlayerPrefab
@@ -805,7 +852,7 @@ goalEffectPrefab
 scoreboardPrefab
 ```
 
-### 6.10 记分板 UI 预制体
+### 6.11 记分板 UI 预制体
 
 ```csharp
 scoreboardPrefab
