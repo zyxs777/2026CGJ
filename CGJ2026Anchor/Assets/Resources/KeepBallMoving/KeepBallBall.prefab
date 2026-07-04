@@ -46,8 +46,11 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 197f786ab9e042e4977e285d0b34bd0f, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  maxSpeed: 22
-  minSpeed: 5
+  maxSpeed: 30
+  minSpeed: 8
+  releaseKickSpeedMultiplier: 1.75
+  freeBallDeceleration: 7
+  baseFastRotateSpeed: 360
 --- !u!1 &2387587242974815885
 GameObject:
   m_ObjectHideFlags: 0

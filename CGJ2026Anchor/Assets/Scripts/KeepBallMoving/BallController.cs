@@ -5,9 +5,9 @@ namespace KeepBallMoving
 {
     public sealed class BallController : MonoBehaviour
     {
-        [SerializeField] private float maxSpeed = 22f;
-        [SerializeField] private float minSpeed = 5f;
-        [SerializeField] private float releaseKickSpeedMultiplier = 1.35f;
+        [SerializeField] private float maxSpeed = 30f;
+        [SerializeField] private float minSpeed = 8f;
+        [SerializeField] private float releaseKickSpeedMultiplier = 1.75f;
         [SerializeField] private float freeBallDeceleration = 7f;
         [SerializeField] private float baseFastRotateSpeed = 360f;
 
@@ -31,6 +31,7 @@ namespace KeepBallMoving
         public Vector2 Velocity => body != null ? body.velocity : Vector2.zero;
         public PlayerAgent Holder => holder;
         public float Radius => radius;
+        public float HoldAngularSpeed => holdAngularSpeed;
         public bool IsPhantom { get; private set; }
         public Team PhantomOwner { get; private set; }
 
@@ -186,6 +187,11 @@ namespace KeepBallMoving
             body.velocity = Vector2.zero;
             body.angularVelocity = 0f;
             UpdateFastRotateSpeed(0f);
+        }
+
+        public void SetHoldAngularSpeed(float angularSpeed)
+        {
+            holdAngularSpeed = angularSpeed;
         }
 
         private Vector2 GetHeldPosition()

@@ -66,7 +66,7 @@ namespace KeepBallMoving
         [SerializeField] private float holderMoveSpeedMultiplier = 0.35f;
         [SerializeField] private float sameTeamSeparationRadius = 1.25f;
         [SerializeField] private float sameTeamSeparationStrength = 1.1f;
-        [SerializeField] private float opponentSeparationRadius = 1.1f;
+        [SerializeField] private float opponentSeparationRadius = 2f;
         [SerializeField] private float opponentSeparationStrength = 1.35f;
         [SerializeField] private float ballFacingRadius = 4.5f;
         [SerializeField] private int pressurePlayerCount = 2;
@@ -77,6 +77,14 @@ namespace KeepBallMoving
         [SerializeField] private float redAutoHoldDelay = 0.55f;
         [SerializeField] private float redPassSpeed = 11.5f;
         [SerializeField] private float redReleaseSpeed = 13.5f;
+
+        [Header("Stamina")]
+        [SerializeField] private float staminaRecoveryPerSecond = 35f;
+        [SerializeField] private float movementStaminaDrainPerSecond = 6f;
+        [SerializeField] private float dribbleStaminaDrainPerSecond = 8f;
+        [SerializeField] private float passChargeStaminaDrainPerSecond = 12f;
+        [SerializeField] private float passReleaseStaminaCost = 8f;
+        [SerializeField] private float exhaustedMoveSpeedMultiplier;
 
         [Header("Red AI Difficulty")]
         [SerializeField, Range(0f, 1f)] private float redAiStrength = 0.6f;
@@ -111,6 +119,9 @@ namespace KeepBallMoving
         [SerializeField] private float phantomPlayerKickSpeed = 15f;
         [SerializeField] private float phantomPlayerHoldAngularSpeed = 420f;
         [SerializeField] private Color phantomPlayerColor = new Color(0.42f, 0.92f, 1f, 0.78f);
+        [SerializeField] private float directionalControlHoldSpeedBonusPerStack = 0.25f;
+        [SerializeField] private float directionalControlReleaseSpeedBonusPerStack = 0.12f;
+        [SerializeField] private float directionalControlInputThreshold = 0.35f;
 
         [Header("Goal Presentation")]
         [SerializeField, Range(0.05f, 1f)] private float goalSlowTimeScale = 0.18f;
@@ -208,7 +219,7 @@ namespace KeepBallMoving
         private const float TalentBadgeHeight = 44f;
         private const float TalentBadgeGap = 6f;
         private const int TalentChoiceCount = 3;
-        private const int TalentTypeCount = 9;
+        private const int TalentTypeCount = 10;
 
         private enum MatchMode
         {
@@ -226,7 +237,8 @@ namespace KeepBallMoving
             ExtraDefender,
             ShieldField,
             PassField,
-            PhantomPlayer
+            PhantomPlayer,
+            DirectionalControl
         }
 
         private struct TalentOption
@@ -304,6 +316,7 @@ namespace KeepBallMoving
 
             if (ball.State == BallState.Held)
             {
+                UpdateHeldBallMotion();
                 ball.TickHold(Time.deltaTime);
                 UpdateBallFacingOverrides();
 
@@ -457,6 +470,9 @@ namespace KeepBallMoving
 
         private void HandlePlayerHeldBall(Team team, float deltaTime)
         {
+            PlayerAgent holder = ball.Holder;
+            TickHolderStamina(holder, IsHoldChargeArmed(team), deltaTime);
+
             if (!IsHoldChargeArmed(team))
             {
                 stateText = $"{GetTeamLabel(team)}持球：按住{GetPrimaryActionHint(team)}蓄力";
@@ -482,6 +498,9 @@ namespace KeepBallMoving
 
         private void HandleRedAiHeldBall(float deltaTime)
         {
+            PlayerAgent holder = ball.Holder;
+            TickHolderStamina(holder, true, deltaTime);
+
             chargeTime += deltaTime;
             float holdDelay = Mathf.Max(0.05f, redCurrentHoldDelay);
             stateText = $"红方控球 {Mathf.Clamp01(chargeTime / holdDelay):P0}";
@@ -662,6 +681,21 @@ namespace KeepBallMoving
                 rightStickHorizontalMissing = true;
                 return 0f;
             }
+        }
+
+        private float GetDirectionalControlAxis(Team team)
+        {
+            float axis = GetTeamHorizontalAxis(team);
+            if (Input.GetKey(KeyCode.A) || Input.GetKey(KeyCode.LeftArrow))
+            {
+                axis = -1f;
+            }
+            else if (Input.GetKey(KeyCode.D) || Input.GetKey(KeyCode.RightArrow))
+            {
+                axis = 1f;
+            }
+
+            return axis;
         }
 
         private void CreateRuntimeAssets()
@@ -1361,8 +1395,9 @@ namespace KeepBallMoving
             PlayerAgent holder = ball.Holder;
             Team releaseTeam = holder != null ? holder.Team : Team.Blue;
             float charge01 = Mathf.Clamp01(chargeTime / maxChargeTime);
-            float releaseSpeed = Mathf.Lerp(minReleaseSpeed, maxReleaseSpeed, charge01);
+            float releaseSpeed = Mathf.Lerp(minReleaseSpeed, maxReleaseSpeed, charge01) * GetDirectionalControlReleaseMultiplier(releaseTeam);
             Vector2 releaseDirection = ball.Release(releaseSpeed);
+            holder?.ConsumeStamina(passReleaseStaminaCost);
             ClearKickoffLockIfHolder(holder);
             ApplyReleaseTalents(releaseTeam, ball.Position, releaseDirection, releaseSpeed);
             SetPhantomPlayerPassWindowActive(Team.Blue, false);
@@ -1384,8 +1419,9 @@ namespace KeepBallMoving
             PlayerAgent holder = ball.Holder;
             Team releaseTeam = holder != null ? holder.Team : Team.Red;
             Vector2 target = GetRedReleaseTarget(out float releaseSpeed, out string message);
-            float finalSpeed = ApplyRedKickSpeedVariance(releaseSpeed);
+            float finalSpeed = ApplyRedKickSpeedVariance(releaseSpeed) * GetDirectionalControlReleaseMultiplier(releaseTeam);
             Vector2 releaseDirection = ball.ReleaseToward(target, finalSpeed);
+            holder?.ConsumeStamina(passReleaseStaminaCost);
             ClearKickoffLockIfHolder(holder);
             ApplyReleaseTalents(releaseTeam, ball.Position, releaseDirection, finalSpeed);
             SetPhantomPlayerPassWindowActive(Team.Blue, false);
@@ -1456,6 +1492,7 @@ namespace KeepBallMoving
 
             Vector2 origin = activePhantomPlayer.Position;
             Vector2 releaseDirection = ball.ReleaseFromHolderPosition(phantomPlayerKickSpeed);
+            activePhantomPlayer.ConsumeStamina(passReleaseStaminaCost);
             ApplyReleaseTalents(activePhantomPlayerTeam, origin, releaseDirection, phantomPlayerKickSpeed);
             DestroyActivePhantomPlayer();
             chargeTime = 0f;
@@ -1657,6 +1694,11 @@ namespace KeepBallMoving
 
         private bool CanRedAutoControlBall(PlayerAgent player)
         {
+            if (player == null)
+            {
+                return false;
+            }
+
             float skill = GetRedDimensionSkill(redAutoCatchSkill);
             float catchRadiusMultiplier = Mathf.Lerp(1f - redMaxCatchRadiusPenalty, 1f, skill);
             float controlDistance = GetEffectiveCatchRadius(player) * catchRadiusMultiplier + ball.Radius;
@@ -1665,7 +1707,7 @@ namespace KeepBallMoving
 
         private bool CanPlayerCatchBall(PlayerAgent player, BallController targetBall)
         {
-            if (targetBall == null || targetBall.IsPhantom)
+            if (player == null || targetBall == null || targetBall.IsPhantom)
             {
                 return false;
             }
@@ -1676,7 +1718,7 @@ namespace KeepBallMoving
 
         private bool CanPlayerInterceptPhantom(PlayerAgent player, BallController targetBall)
         {
-            if (targetBall == null || !targetBall.IsPhantom || player.Team == targetBall.PhantomOwner)
+            if (player == null || targetBall == null || !targetBall.IsPhantom || player.Team == targetBall.PhantomOwner)
             {
                 return false;
             }
@@ -1709,6 +1751,66 @@ namespace KeepBallMoving
         private float GetRedWeakness(float skill)
         {
             return 1f - GetRedDimensionSkill(skill);
+        }
+
+        private void TickHolderStamina(PlayerAgent holder, bool chargingPass, float deltaTime)
+        {
+            if (holder == null)
+            {
+                return;
+            }
+
+            float drain = dribbleStaminaDrainPerSecond;
+            if (chargingPass)
+            {
+                drain += passChargeStaminaDrainPerSecond;
+            }
+
+            holder.TickStamina(deltaTime, drain, staminaRecoveryPerSecond);
+        }
+
+        private void UpdateHeldBallMotion()
+        {
+            if (ball == null || ball.State != BallState.Held || ball.Holder == null)
+            {
+                return;
+            }
+
+            PlayerAgent holder = ball.Holder;
+            Team team = holder.Team;
+            float baseSpeed = Mathf.Abs(holder == activePhantomPlayer ? phantomPlayerHoldAngularSpeed : holdAngularSpeed);
+            float speed = baseSpeed * GetDirectionalControlHoldMultiplier(team);
+            float sign = Mathf.Sign(ball.HoldAngularSpeed);
+            if (Mathf.Abs(sign) < 0.001f)
+            {
+                sign = team == Team.Blue ? 1f : -1f;
+            }
+
+            int stackCount = GetTalentCount(team, TalentId.DirectionalControl);
+            if (stackCount <= 0)
+            {
+                ball.SetHoldAngularSpeed(sign * speed);
+                return;
+            }
+
+            bool playerControlled = team == Team.Blue || IsPvpMode();
+            float axis = playerControlled ? GetDirectionalControlAxis(team) : 0f;
+            if (Mathf.Abs(axis) >= Mathf.Max(0.01f, directionalControlInputThreshold))
+            {
+                sign = Mathf.Sign(axis);
+            }
+
+            ball.SetHoldAngularSpeed(sign * speed);
+        }
+
+        private float GetDirectionalControlHoldMultiplier(Team team)
+        {
+            return 1f + Mathf.Max(0f, directionalControlHoldSpeedBonusPerStack) * GetTalentCount(team, TalentId.DirectionalControl);
+        }
+
+        private float GetDirectionalControlReleaseMultiplier(Team team)
+        {
+            return 1f + Mathf.Max(0f, directionalControlReleaseSpeedBonusPerStack) * GetTalentCount(team, TalentId.DirectionalControl);
         }
 
         private PlayerAgent FindNearestCatchablePlayer(Team team)
@@ -1985,11 +2087,13 @@ namespace KeepBallMoving
             if (kickoffPlayerLocked && player == lockedKickoffPlayer)
             {
                 player.MoveTo(lockedKickoffPosition);
+                player.TickStamina(deltaTime, 0f, staminaRecoveryPerSecond);
                 return;
             }
 
             if (player.IsKnockbackActive)
             {
+                player.TickStamina(deltaTime, 0f, staminaRecoveryPerSecond);
                 return;
             }
 
@@ -2000,11 +2104,25 @@ namespace KeepBallMoving
                 speed *= holderMoveSpeedMultiplier;
             }
 
+            if (player.IsStaminaExhausted)
+            {
+                speed = GetExhaustedMoveSpeed();
+            }
+
             Vector2 current = player.Position;
             Vector2 separation = GetSeparation(player, team);
             Vector2 adjustedTarget = target + separation;
             Vector2 next = Vector2.MoveTowards(current, adjustedTarget, speed * deltaTime);
             player.MoveTo(ClampInsideField(next));
+            float movementDrain = !player.IsStaminaExhausted && Vector2.SqrMagnitude(next - current) > 0.000001f ? movementStaminaDrainPerSecond : 0f;
+            player.TickStamina(deltaTime, movementDrain, staminaRecoveryPerSecond);
+        }
+
+        private float GetExhaustedMoveSpeed()
+        {
+            float baseSpeed = Mathf.Min(Mathf.Max(0.01f, blueMoveSpeed), Mathf.Max(0.01f, redMoveSpeed));
+            float roleMultiplier = Mathf.Min(forwardMoveSpeedMultiplier, Mathf.Min(midfielderMoveSpeedMultiplier, defenderMoveSpeedMultiplier));
+            return baseSpeed * Mathf.Max(0.01f, roleMultiplier) * Mathf.Max(0f, exhaustedMoveSpeedMultiplier);
         }
 
         private float GetRoleSpeedMultiplier(PlayerRole role)
@@ -2439,7 +2557,8 @@ namespace KeepBallMoving
                 TalentId.ExtraDefender,
                 TalentId.ShieldField,
                 TalentId.PassField,
-                TalentId.PhantomPlayer
+                TalentId.PhantomPlayer,
+                TalentId.DirectionalControl
             };
             List<TalentId> availablePool = new List<TalentId>();
             foreach (TalentId talentId in pool)
@@ -2496,7 +2615,7 @@ namespace KeepBallMoving
                     {
                         Id = id,
                         Name = "额外前锋",
-                        Description = "额外获得一个右方前锋球员，最多 2 层。",
+                        Description = "额外获得一个右方前锋球员，最多 1 层。",
                         AccentColor = new Color(1f, 0.28f, 0.22f, 1f)
                     };
                 case TalentId.ExtraMidfielder:
@@ -2504,7 +2623,7 @@ namespace KeepBallMoving
                     {
                         Id = id,
                         Name = "额外中场",
-                        Description = "额外获得一个右方中场球员，最多 2 层。",
+                        Description = "额外获得一个右方中场球员，最多 1 层。",
                         AccentColor = new Color(0.38f, 1f, 0.44f, 1f)
                     };
                 case TalentId.ExtraDefender:
@@ -2512,7 +2631,7 @@ namespace KeepBallMoving
                     {
                         Id = id,
                         Name = "额外后卫",
-                        Description = "额外获得一个右方后卫球员，最多 2 层。",
+                        Description = "额外获得一个右方后卫球员，最多 1 层。",
                         AccentColor = new Color(0.35f, 0.58f, 1f, 1f)
                     };
                 case TalentId.ShieldField:
@@ -2538,6 +2657,14 @@ namespace KeepBallMoving
                         Name = "幻影球员",
                         Description = "己方传球后可按 Z/B 在球所在位置生成幻影球员，球会绕着幻影球员运动。每次进球后的新一轮最多使用 1 次。",
                         AccentColor = new Color(0.42f, 0.92f, 1f, 1f)
+                    };
+                case TalentId.DirectionalControl:
+                    return new TalentOption
+                    {
+                        Id = id,
+                        Name = "变向控球",
+                        Description = "接球后可用 A/D、左右方向键或左摇杆左右改变足球绕行方向。每层提高持球球速和出球速度，最多 3 层。",
+                        AccentColor = new Color(1f, 0.42f, 0.72f, 1f)
                     };
                 default:
                     return new TalentOption
@@ -2938,11 +3065,12 @@ namespace KeepBallMoving
                 case TalentId.BigfootForward:
                 case TalentId.ShieldField:
                 case TalentId.PassField:
+                case TalentId.DirectionalControl:
                     return 3;
                 case TalentId.ExtraForward:
                 case TalentId.ExtraMidfielder:
                 case TalentId.ExtraDefender:
-                    return 2;
+                    return 1;
                 case TalentId.PhantomPlayer:
                     return 1;
                 default:
@@ -3030,6 +3158,8 @@ namespace KeepBallMoving
                     return "传球立场";
                 case TalentId.PhantomPlayer:
                     return "幻影球员";
+                case TalentId.DirectionalControl:
+                    return "变向控球";
                 default:
                     return "香蕉球";
             }
@@ -3055,6 +3185,8 @@ namespace KeepBallMoving
                     return new Color(0.78f, 0.45f, 1f, 1f);
                 case TalentId.PhantomPlayer:
                     return new Color(0.42f, 0.92f, 1f, 1f);
+                case TalentId.DirectionalControl:
+                    return new Color(1f, 0.42f, 0.72f, 1f);
                 default:
                     return new Color(1f, 0.9f, 0.2f, 1f);
             }
@@ -3458,6 +3590,14 @@ namespace KeepBallMoving
                     DrawFilledRect(new Rect(iconRect.center.x + 34f, iconRect.center.y - 10f, 20f, 20f), new Color(1f, 1f, 1f, 0.85f));
                     DrawFilledRect(new Rect(iconRect.center.x - 54f, iconRect.center.y - 2f, 24f, 4f), new Color(option.AccentColor.r, option.AccentColor.g, option.AccentColor.b, 0.75f));
                     DrawFilledRect(new Rect(iconRect.center.x + 14f, iconRect.center.y - 2f, 24f, 4f), new Color(option.AccentColor.r, option.AccentColor.g, option.AccentColor.b, 0.75f));
+                    break;
+                case TalentId.DirectionalControl:
+                    DrawBorder(new Rect(iconRect.center.x - 48f, iconRect.center.y - 48f, 96f, 96f), new Color(option.AccentColor.r, option.AccentColor.g, option.AccentColor.b, 0.65f), 4f);
+                    DrawFilledRect(new Rect(iconRect.center.x - 18f, iconRect.center.y - 18f, 36f, 36f), option.AccentColor);
+                    DrawFilledRect(new Rect(iconRect.x + 42f, iconRect.center.y - 4f, 36f, 8f), new Color(1f, 1f, 1f, 0.8f));
+                    DrawFilledRect(new Rect(iconRect.x + 42f, iconRect.center.y - 18f, 8f, 36f), new Color(1f, 1f, 1f, 0.8f));
+                    DrawFilledRect(new Rect(iconRect.xMax - 78f, iconRect.center.y - 4f, 36f, 8f), new Color(1f, 1f, 1f, 0.8f));
+                    DrawFilledRect(new Rect(iconRect.xMax - 50f, iconRect.center.y - 18f, 8f, 36f), new Color(1f, 1f, 1f, 0.8f));
                     break;
                 default:
                     for (int i = 0; i < 6; i++)

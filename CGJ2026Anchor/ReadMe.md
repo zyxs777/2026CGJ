@@ -130,6 +130,7 @@ Defender    后卫
 - 触球范围显示。默认由 `HoldRangeBlue.prefab` / `HoldRangeRed.prefab` 实例化，并按实际接球范围缩放。
 - 临时高亮。
 - 平滑击退。
+- 内置体力值。
 - 基础移动接口。
 
 ### 3.5 BallController.cs
@@ -298,6 +299,8 @@ hold：持球时为 true；不持球时为 false
 
 球员 Sprite 默认朝右。运行时向左移动会设置 `flipX=true`，向右移动会恢复 `flipX=false`，原地或竖向移动时保持当前朝向。非持球队员进入 `ballFacingRadius` 范围内时，会强制朝向球；持球队员不受这个规则影响。
 
+球员内置体力值，默认不外显 UI。移动、持球运球、蓄力传球和出球都会消耗体力；体力耗尽后，球员进入恢复期，移动速度降为 0，但接球、抢断、持球绕圈、蓄力和出球都不受影响。恢复期会显示 `TiredEffect.prefab` 特效，体力恢复满后关闭特效并恢复正常移动。重新发球或重新开始时，球员回到阵型位置并恢复满体力。
+
 球员颜色也在球员预制体的 `PlayerAgent` 上调：
 
 ```text
@@ -335,6 +338,7 @@ PVP：蓝方玩家控制，红方玩家控制。
 蓝方空格：抓球 / 开始蓄力 / 确认踢出幻影球员持有的球
 蓝方松开空格：释放足球
 蓝方 Z：拥有幻影球员天赋后，在当前传球窗口中生成幻影球员
+拥有变向控球天赋时，持球后 A/D 或左右方向键：改变足球绕行方向
 红方 Enter 或右 Ctrl：PVP 下抓球 / 开始蓄力 / 确认踢出幻影球员持有的球
 红方松开 Enter 或右 Ctrl：PVP 下释放足球
 红方右 Shift 或 /：PVP 下生成幻影球员
@@ -355,6 +359,7 @@ N：重新开始比赛并清空天赋
 手柄2 B：PVP 下红方召唤幻影球员
 手柄1 左右摇杆：蓝方选择天赋
 手柄2 左右摇杆：红方选择天赋
+拥有变向控球天赋时，持球后左摇杆左右：改变足球绕行方向
 PVE 下仍兼容任意手柄 A/B 操作蓝方
 ```
 
@@ -476,12 +481,13 @@ PVP 模式下，红方 AI 自动接球和自动出球不会执行，但红方球
 |---|---:|---|
 | 幻影足球 | 3 | 每层在传球时多生成 1 颗幻影足球；多颗幻影足球平分 60 度散射角。 |
 | 大脚怪前锋 | 3 | 前锋接球范围和身体范围每层提高 10%，并同步更新范围指示器。 |
-| 额外前锋 | 2 | 每层额外获得 1 个右方前锋球员。 |
-| 额外中场 | 2 | 每层额外获得 1 个右方中场球员。 |
-| 额外后卫 | 2 | 每层额外获得 1 个右方后卫球员。 |
+| 额外前锋 | 1 | 额外获得 1 个右方前锋球员。 |
+| 额外中场 | 1 | 额外获得 1 个右方中场球员。 |
+| 额外后卫 | 1 | 额外获得 1 个右方后卫球员。 |
 | 护球立场 | 3 | 己方接球时产生圆形震荡波，范围和击退距离随层数提高。 |
 | 传球立场 | 3 | 己方传球时产生圆形震荡波，范围和击退距离随层数提高。 |
 | 幻影球员 | 1 | 己方传球后可按 Z/B 在球所在位置生成幻影球员；每次进球后的新一轮最多使用 1 次。 |
+| 变向控球 | 3 | 接球后可用 A/D、左右方向键或左摇杆左右改变足球绕行方向；每层提高持球球速和出球速度。 |
 
 香蕉球暂时保留枚举和曲线代码，但当前不在可选天赋池中。
 
@@ -577,6 +583,7 @@ waveEffectred.prefab
 KeepBallPhantomPlayer.prefab
 KeepBallTalentBadge.prefab
 GoalEffect.prefab
+TiredEffect.prefab
 ```
 
 用途：
@@ -592,6 +599,7 @@ GoalEffect.prefab
 - `KeepBallPhantomPlayer.prefab`：幻影球员预制体。
 - `KeepBallTalentBadge.prefab`：左右下角天赋条目 UI 预制体。
 - `GoalEffect.prefab`：进球瞬间生成在破门位置的世界特效。
+- `TiredEffect.prefab`：球员体力归零进入恢复期时显示在球员身上的疲劳特效。
 
 如果 Inspector 中没有手动指定，`KeepBallGameManager` 会从 Resources 自动加载默认预制体。
 
@@ -663,7 +671,36 @@ redReleaseSpeed
 - `pressureSideOffset`：多名球员压迫时在持球人上下两侧错开的距离。
 - `defenderPressureBackOffset`：后卫逼抢时站在持球人和自家球门之间的横向偏移。
 
-### 6.3 球员预制体视觉
+### 6.3 体力参数
+
+`PlayerAgent` 上可调：
+
+```csharp
+maxStamina
+```
+
+`KeepBallGameManager` 上可调：
+
+```csharp
+staminaRecoveryPerSecond
+movementStaminaDrainPerSecond
+dribbleStaminaDrainPerSecond
+passChargeStaminaDrainPerSecond
+passReleaseStaminaCost
+exhaustedMoveSpeedMultiplier
+```
+
+体力规则：
+
+- `movementStaminaDrainPerSecond`：球员主动移动时持续消耗。
+- `dribbleStaminaDrainPerSecond`：持球时足球绕身运转持续消耗。
+- `passChargeStaminaDrainPerSecond`：蓄力传球或 AI 持球准备出球时持续消耗。
+- `passReleaseStaminaCost`：真正出球瞬间额外消耗。
+- `exhaustedMoveSpeedMultiplier`：体力为 0 时使用“最低正常移速”的倍率，默认 0，也就是恢复期不移动。
+- 体力为 0 后仍可接球、抢断、持球绕圈、蓄力和出球，只是移动速度降为 0；体力恢复满后恢复正常移速。
+- 恢复期会在球员身上显示 `Assets/Resources/KeepBallMoving/TiredEffect.prefab`，恢复结束时关闭。
+
+### 6.4 球员预制体视觉
 
 ```csharp
 blueColor
@@ -674,7 +711,7 @@ redHighlightColor
 
 这些字段在 `PlayerAgent` 上，建议直接到 `KeepBallPlayer.prefab` 和 `KeepBallPlayer1.prefab` 中调试。
 
-### 6.4 比赛规则参数
+### 6.5 比赛规则参数
 
 ```csharp
 scoreToWin
@@ -682,7 +719,7 @@ scoreToWin
 
 `scoreToWin` 默认是 `10`，表示谁先达到 10 球谁赢。可以在 `KeepBallGameManager` 的 Inspector 中调整。
 
-### 6.5 进球演出
+### 6.6 进球演出
 
 ```csharp
 goalSlowTimeScale
@@ -693,7 +730,7 @@ goalZoomOrthographicSize
 goalEffectLifetime
 ```
 
-### 6.6 红方 AI 强度
+### 6.7 红方 AI 强度
 
 ```csharp
 redAiStrength
@@ -712,7 +749,7 @@ redMaxShotAimError
 redMaxKickSpeedRandomness
 ```
 
-### 6.7 天赋参数
+### 6.8 天赋参数
 
 ```csharp
 phantomBallSpawnOffset
@@ -731,9 +768,12 @@ shockwaveEffectPrefabRadius
 phantomPlayerKickSpeed
 phantomPlayerHoldAngularSpeed
 phantomPlayerColor
+directionalControlHoldSpeedBonusPerStack
+directionalControlReleaseSpeedBonusPerStack
+directionalControlInputThreshold
 ```
 
-### 6.7 预制体字段
+### 6.9 预制体字段
 
 ```csharp
 bluePlayerPrefab

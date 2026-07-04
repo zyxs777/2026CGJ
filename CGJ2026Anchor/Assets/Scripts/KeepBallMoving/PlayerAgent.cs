@@ -14,6 +14,9 @@ namespace KeepBallMoving
         [SerializeField] private Color redColor = new Color(0.95f, 0.12f, 0.11f, 1f);
         [SerializeField] private Color blueHighlightColor = new Color(0.52f, 0.78f, 1f, 1f);
         [SerializeField] private Color redHighlightColor = new Color(1f, 0.48f, 0.42f, 1f);
+        [Header("Stamina")]
+        [SerializeField] private float maxStamina = 100f;
+        [SerializeField] private GameObject tiredEffectPrefab;
 
         private SpriteRenderer spriteRenderer;
         private CircleCollider2D bodyCollider;
@@ -24,6 +27,7 @@ namespace KeepBallMoving
         private Transform holdPointTransform;
         private SpriteRenderer holdPointRenderer;
         private Transform targetIndicator;
+        private GameObject tiredEffectInstance;
         private Animator animator;
         private Color baseColor;
         private Color highlightColor;
@@ -38,10 +42,14 @@ namespace KeepBallMoving
         private bool animatorHasHold;
         private bool isHoldingAnimation;
         private bool hasFacingOverride;
+        private bool staminaExhausted;
         private Vector2 facingOverrideTarget;
+        private float currentStamina;
+        private int lastStaminaRecoveryFrame = -1;
 
         private static readonly int RunAnimatorHash = Animator.StringToHash("run");
         private static readonly int HoldAnimatorHash = Animator.StringToHash("hold");
+        private const string DefaultTiredEffectPrefabPath = "KeepBallMoving/TiredEffect";
         private const float RunAnimationMoveThreshold = 0.0025f;
         private const float FacingMoveThreshold = 0.001f;
         private const int NormalSortingOrder = 30;
@@ -54,6 +62,9 @@ namespace KeepBallMoving
         public Vector2 Position => transform.position;
         public Vector2 HoldPointPosition => holdPointTransform != null ? holdPointTransform.position : transform.position;
         public bool IsKnockbackActive => knockbackRoutine != null;
+        public bool IsStaminaExhausted => staminaExhausted;
+        public bool HasUsableStamina => !staminaExhausted && currentStamina > 0f;
+        public float Stamina01 => Mathf.Clamp01(currentStamina / Mathf.Max(0.001f, maxStamina));
 
         public void Initialize(Team playerTeam, PlayerRole playerRole, int index, Vector2 startPosition, Sprite sprite, Sprite controlRangeSprite, GameObject controlRangePrefab, Sprite holdPointSprite, float radius, float catchRange, float pointRadius)
         {
@@ -105,6 +116,7 @@ namespace KeepBallMoving
             CreateHoldPointVisual(holdPointSprite, baseColor);
             CacheTargetIndicator();
             CacheAnimator();
+            ResetStaminaFull();
             SetHoldingAnimation(false);
         }
 
@@ -171,6 +183,53 @@ namespace KeepBallMoving
         public void MoveTo(Vector2 position)
         {
             transform.position = position;
+        }
+
+        public void TickStamina(float deltaTime, float drainPerSecond, float recoverPerSecond)
+        {
+            if (maxStamina <= 0f)
+            {
+                currentStamina = 0f;
+                staminaExhausted = false;
+                SetTiredEffectVisible(false);
+                return;
+            }
+
+            if (staminaExhausted)
+            {
+                RecoverStamina(deltaTime, recoverPerSecond);
+                return;
+            }
+
+            float drain = Mathf.Max(0f, drainPerSecond) * Mathf.Max(0f, deltaTime);
+            if (drain > 0f)
+            {
+                ConsumeStamina(drain);
+                return;
+            }
+
+            RecoverStamina(deltaTime, recoverPerSecond);
+        }
+
+        public void ConsumeStamina(float amount)
+        {
+            if (maxStamina <= 0f || staminaExhausted)
+            {
+                return;
+            }
+
+            currentStamina = Mathf.Max(0f, currentStamina - Mathf.Max(0f, amount));
+            if (currentStamina <= 0f)
+            {
+                SetStaminaExhausted(true);
+            }
+        }
+
+        public void ResetStaminaFull()
+        {
+            currentStamina = Mathf.Max(0f, maxStamina);
+            SetStaminaExhausted(false);
+            lastStaminaRecoveryFrame = -1;
         }
 
         public void SetHoldingAnimation(bool holding)
@@ -262,9 +321,93 @@ namespace KeepBallMoving
             spawnPosition = position;
             transform.position = spawnPosition;
             lastAnimationPosition = spawnPosition;
+            ResetStaminaFull();
             SetFacingOverride(Vector2.zero, false);
             SetHoldingAnimation(false);
             SetCatchHighlighted(false);
+        }
+
+        private void RecoverStamina(float deltaTime, float recoverPerSecond)
+        {
+            if (lastStaminaRecoveryFrame == Time.frameCount)
+            {
+                return;
+            }
+
+            lastStaminaRecoveryFrame = Time.frameCount;
+            currentStamina = Mathf.Min(Mathf.Max(0f, maxStamina), currentStamina + Mathf.Max(0f, recoverPerSecond) * Mathf.Max(0f, deltaTime));
+            if (staminaExhausted && currentStamina >= Mathf.Max(0f, maxStamina))
+            {
+                SetStaminaExhausted(false);
+            }
+        }
+
+        private void SetStaminaExhausted(bool exhausted)
+        {
+            if (staminaExhausted == exhausted)
+            {
+                return;
+            }
+
+            staminaExhausted = exhausted;
+            SetTiredEffectVisible(exhausted);
+        }
+
+        private void SetTiredEffectVisible(bool visible)
+        {
+            if (visible)
+            {
+                EnsureTiredEffect();
+            }
+
+            if (tiredEffectInstance == null)
+            {
+                return;
+            }
+
+            if (tiredEffectInstance.activeSelf != visible)
+            {
+                tiredEffectInstance.SetActive(visible);
+            }
+
+            ParticleSystem[] particleSystems = tiredEffectInstance.GetComponentsInChildren<ParticleSystem>(true);
+            for (int i = 0; i < particleSystems.Length; i++)
+            {
+                if (visible)
+                {
+                    ParticleSystem.MainModule main = particleSystems[i].main;
+                    main.loop = true;
+                    particleSystems[i].Play(true);
+                }
+                else
+                {
+                    particleSystems[i].Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+                }
+            }
+        }
+
+        private void EnsureTiredEffect()
+        {
+            if (tiredEffectInstance != null)
+            {
+                return;
+            }
+
+            if (tiredEffectPrefab == null)
+            {
+                tiredEffectPrefab = Resources.Load<GameObject>(DefaultTiredEffectPrefabPath);
+            }
+
+            if (tiredEffectPrefab == null)
+            {
+                return;
+            }
+
+            tiredEffectInstance = Instantiate(tiredEffectPrefab, transform);
+            tiredEffectInstance.name = "TiredEffect";
+            tiredEffectInstance.transform.localPosition = Vector3.zero;
+            tiredEffectInstance.transform.localRotation = Quaternion.identity;
+            tiredEffectInstance.transform.localScale = Vector3.one;
         }
 
         private void LateUpdate()
