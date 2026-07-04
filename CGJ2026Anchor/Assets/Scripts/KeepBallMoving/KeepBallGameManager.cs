@@ -91,6 +91,9 @@ namespace KeepBallMoving
         [SerializeField] private float exhaustedMoveSpeedMultiplier;
         [SerializeField] private float skyGiantSizeMultiplier = 2f;
         [SerializeField] private float skyGiantMoveSpeedMultiplier = 0.45f;
+        [SerializeField] private float skyGiantShockwaveInterval = 1f;
+        [SerializeField] private float skyGiantShockwaveRadius = 2.8f;
+        [SerializeField] private float skyGiantShockwavePushDistance = 1.8f;
 
         [Header("Red AI Difficulty")]
         [SerializeField, Range(0f, 1f)] private float redAiStrength = 0.6f;
@@ -189,6 +192,8 @@ namespace KeepBallMoving
         private Team activePhantomPlayerTeam = Team.Blue;
         private PlayerAgent blueSkyGiantPlayer;
         private PlayerAgent redSkyGiantPlayer;
+        private float blueSkyGiantNextShockwaveTime;
+        private float redSkyGiantNextShockwaveTime;
         private PlayerAgent lockedKickoffPlayer;
         private bool kickoffPlayerLocked;
         private Vector2 lockedKickoffPosition;
@@ -1475,7 +1480,7 @@ namespace KeepBallMoving
             float charge01 = Mathf.Clamp01(chargeTime / maxChargeTime);
             float releaseSpeed = Mathf.Lerp(minReleaseSpeed, maxReleaseSpeed, charge01) * GetDirectionalControlReleaseMultiplier(releaseTeam);
             Vector2 releaseDirection = ball.Release(releaseSpeed);
-            holder?.ConsumeStamina(passReleaseStaminaCost);
+            ConsumePassReleaseStamina(holder);
             ClearKickoffLockIfHolder(holder);
             ApplyReleaseTalents(releaseTeam, ball.Position, releaseDirection, releaseSpeed);
             SetPhantomPlayerPassWindowActive(Team.Blue, false);
@@ -1499,7 +1504,7 @@ namespace KeepBallMoving
             Vector2 target = GetRedReleaseTarget(out float releaseSpeed, out string message);
             float finalSpeed = ApplyRedKickSpeedVariance(releaseSpeed) * GetDirectionalControlReleaseMultiplier(releaseTeam);
             Vector2 releaseDirection = ball.ReleaseToward(target, finalSpeed);
-            holder?.ConsumeStamina(passReleaseStaminaCost);
+            ConsumePassReleaseStamina(holder);
             ClearKickoffLockIfHolder(holder);
             ApplyReleaseTalents(releaseTeam, ball.Position, releaseDirection, finalSpeed);
             SetPhantomPlayerPassWindowActive(Team.Blue, false);
@@ -1838,6 +1843,12 @@ namespace KeepBallMoving
                 return false;
             }
 
+            if (IsSkyGiant(holder))
+            {
+                holder.TickStamina(deltaTime, 0f, staminaRecoveryPerSecond);
+                return false;
+            }
+
             bool wasExhausted = holder.IsStaminaExhausted;
             float drain = dribbleStaminaDrainPerSecond;
             if (chargingPass)
@@ -1853,6 +1864,16 @@ namespace KeepBallMoving
             }
 
             return false;
+        }
+
+        private void ConsumePassReleaseStamina(PlayerAgent holder)
+        {
+            if (holder == null || IsSkyGiant(holder))
+            {
+                return;
+            }
+
+            holder.ConsumeStamina(passReleaseStaminaCost);
         }
 
         private void ReleaseHeldBallOnStaminaExhausted(PlayerAgent holder)
@@ -2219,12 +2240,13 @@ namespace KeepBallMoving
                 speed *= holderMoveSpeedMultiplier;
             }
 
-            if (IsSkyGiant(player))
+            bool isSkyGiant = IsSkyGiant(player);
+            if (isSkyGiant)
             {
                 speed *= Mathf.Max(0f, skyGiantMoveSpeedMultiplier);
             }
 
-            if (player.IsStaminaExhausted)
+            if (!isSkyGiant && player.IsStaminaExhausted)
             {
                 speed = GetExhaustedMoveSpeed();
             }
@@ -2234,8 +2256,13 @@ namespace KeepBallMoving
             Vector2 adjustedTarget = target + separation;
             Vector2 next = Vector2.MoveTowards(current, adjustedTarget, speed * deltaTime);
             player.MoveTo(ClampInsideField(next));
-            float movementDrain = !player.IsStaminaExhausted && Vector2.SqrMagnitude(next - current) > 0.000001f ? movementStaminaDrainPerSecond : 0f;
+            bool moved = Vector2.SqrMagnitude(next - current) > 0.000001f;
+            float movementDrain = !isSkyGiant && !player.IsStaminaExhausted && moved ? movementStaminaDrainPerSecond : 0f;
             player.TickStamina(deltaTime, movementDrain, staminaRecoveryPerSecond);
+            if (isSkyGiant && moved)
+            {
+                TryTriggerSkyGiantShockwave(player);
+            }
         }
 
         private float GetExhaustedMoveSpeed()
@@ -2792,7 +2819,7 @@ namespace KeepBallMoving
                     {
                         Id = id,
                         Name = "天降巨人",
-                        Description = "每轮开局随机一个己方球员变得巨大，但移动速度明显降低。最多 1 层。",
+                        Description = "每轮开局随机一个己方球员变得巨大，不会疲惫，但移动速度明显降低。移动时每隔 1 秒产生和体积挂钩的立场冲击波。最多 1 层。",
                         AccentColor = new Color(1f, 0.78f, 0.28f, 1f)
                     };
                 default:
@@ -2953,6 +2980,44 @@ namespace KeepBallMoving
                 GetStackedFieldRadius(shieldFieldRadius, shieldFieldCount),
                 shieldFieldPushDistance * Mathf.Max(1, shieldFieldCount),
                 GetTalentColor(TalentId.ShieldField));
+        }
+
+        private void TryTriggerSkyGiantShockwave(PlayerAgent player)
+        {
+            if (player == null || !IsSkyGiant(player))
+            {
+                return;
+            }
+
+            float interval = Mathf.Max(0.05f, skyGiantShockwaveInterval);
+            if (Time.time < GetNextSkyGiantShockwaveTime(player.Team))
+            {
+                return;
+            }
+
+            SetNextSkyGiantShockwaveTime(player.Team, Time.time + interval);
+
+            float sizeMultiplier = GetSkyGiantSizeMultiplier(player);
+            float radius = Mathf.Max(0.01f, skyGiantShockwaveRadius) * sizeMultiplier;
+            float pushDistance = Mathf.Max(0f, skyGiantShockwavePushDistance) * sizeMultiplier;
+            TriggerShockwave(player.Team, player.Position, radius, pushDistance, GetTalentColor(TalentId.SkyGiant));
+        }
+
+        private float GetNextSkyGiantShockwaveTime(Team team)
+        {
+            return team == Team.Blue ? blueSkyGiantNextShockwaveTime : redSkyGiantNextShockwaveTime;
+        }
+
+        private void SetNextSkyGiantShockwaveTime(Team team, float nextTime)
+        {
+            if (team == Team.Blue)
+            {
+                blueSkyGiantNextShockwaveTime = nextTime;
+            }
+            else
+            {
+                redSkyGiantNextShockwaveTime = nextTime;
+            }
         }
 
         private float GetStackedFieldRadius(float baseRadius, int stackCount)
@@ -3181,6 +3246,8 @@ namespace KeepBallMoving
         {
             blueSkyGiantPlayer = null;
             redSkyGiantPlayer = null;
+            blueSkyGiantNextShockwaveTime = 0f;
+            redSkyGiantNextShockwaveTime = 0f;
             SyncAllControlRangeVisuals();
         }
 
@@ -3215,6 +3282,7 @@ namespace KeepBallMoving
                 redSkyGiantPlayer = player;
             }
 
+            SetNextSkyGiantShockwaveTime(team, Time.time + Mathf.Max(0.05f, skyGiantShockwaveInterval));
             SyncTeamControlRangeVisuals(team);
         }
 

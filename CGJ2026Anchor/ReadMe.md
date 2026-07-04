@@ -488,7 +488,7 @@ PVP 模式下，红方 AI 自动接球和自动出球不会执行，但红方球
 | 传球立场 | 3 | 己方传球时产生圆形震荡波，范围和击退距离随层数提高。 |
 | 幻影球员 | 1 | 己方传球后可按 Z/B 在球所在位置生成幻影球员；每次进球后的新一轮最多使用 1 次。 |
 | 变向控球 | 3 | 接球后可用 A/D、左右方向键或左摇杆左右改变足球绕行方向；每层提高持球球速和出球速度。 |
-| 天降巨人 | 1 | 每轮开局随机 1 个己方球员变得巨大，身体和接球范围同步扩大，但移动速度明显降低。 |
+| 天降巨人 | 1 | 每轮开局随机 1 个己方球员变得巨大，身体和接球范围同步扩大，不会疲惫；移动速度明显降低，移动时每隔 1 秒产生和体积挂钩的立场冲击波。 |
 
 香蕉球暂时保留枚举和曲线代码，但当前不在可选天赋池中。
 
@@ -545,6 +545,7 @@ PVP 模式下，红方 AI 自动接球和自动出球不会执行，但红方球
 - 红方使用 `waveEffectred.prefab`。
 - 实际影响范围和视觉特效范围使用同一个最终半径。
 - 立场天赋叠层时，击退距离和影响范围都会提高。
+- 天降巨人的移动冲击波复用同一套震荡波预制体、范围缩放和 Lerp 击退逻辑。
 - 击退不是瞬间传送，而是通过 `PlayerAgent.KnockbackTo` 做短时间 Lerp。
 - 击退期间球员不会执行普通移动。
 
@@ -558,9 +559,14 @@ passFieldPushDistance
 fieldRadiusBonusPerStack
 shockwavePushDuration
 shockwaveEffectPrefabRadius
+skyGiantShockwaveInterval
+skyGiantShockwaveRadius
+skyGiantShockwavePushDistance
 ```
 
 `fieldRadiusBonusPerStack` 默认每多一层范围提高 25%。例如护球立场 3 层时，最终范围是 `shieldFieldRadius * 1.5`。`shockwaveEffectPrefabRadius` 是粒子预制体未缩放时对应的视觉半径，默认按 3 个世界单位处理；如果更换粒子资源后视觉仍不一致，可以调这个值。
+
+`skyGiantShockwaveRadius` 和 `skyGiantShockwavePushDistance` 是巨人冲击波的基础范围与击退距离，运行时会乘以 `skyGiantSizeMultiplier`，所以巨人体型越大，冲击波视觉和实际影响范围也越大。`skyGiantShockwaveInterval` 默认 1 秒。
 
 ## 5. 预制体资源
 
@@ -702,6 +708,7 @@ exhaustedMoveSpeedMultiplier
 - `exhaustedMoveSpeedMultiplier`：体力为 0 时使用“最低正常移速”的倍率，默认 0，也就是恢复期不移动。
 - 体力为 0 后仍可接球、抢断、持球绕圈、蓄力和出球，只是移动速度降为 0；体力恢复满后恢复正常移速。
 - 恢复期会在球员身上显示 `Assets/Resources/KeepBallMoving/TiredEffect.prefab`，恢复结束时关闭。
+- 天降巨人不会消耗移动、运球、蓄力和出球体力，也不会进入疲劳恢复期。
 
 ### 6.4 球员预制体视觉
 
@@ -776,6 +783,9 @@ directionalControlReleaseSpeedBonusPerStack
 directionalControlInputThreshold
 skyGiantSizeMultiplier
 skyGiantMoveSpeedMultiplier
+skyGiantShockwaveInterval
+skyGiantShockwaveRadius
+skyGiantShockwavePushDistance
 ```
 
 ### 6.9 预制体字段

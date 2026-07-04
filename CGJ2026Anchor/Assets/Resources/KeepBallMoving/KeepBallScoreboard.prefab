@@ -56,7 +56,7 @@ MonoBehaviour:
   infoText: {fileID: 4789667712420535695}
   backgroundSprite: {fileID: 21300000, guid: dc50ec5d5c877844081512c14c70d083, type: 3}
   backgroundSpriteResourcePath: KeepBallMoving/point
-  scoreTextColor: {r: 0.3301887, g: 0.3301887, b: 0.3301887, a: 1}
+  scoreTextColor: {r: 0.23160101, g: 0.8773585, b: 0.020692414, a: 1}
   infoTextColor: {r: 0.254717, g: 0.254717, b: 0.254717, a: 1}
   size: {x: 700, y: 150}
 --- !u!1 &3797309058291562777
@@ -93,7 +93,7 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 0.42}
   m_AnchorMax: {x: 1, y: 0.82}
-  m_AnchoredPosition: {x: 0, y: 4.7688}
+  m_AnchoredPosition: {x: 1.6000061, y: -1.5999985}
   m_SizeDelta: {x: 0, y: 4.8175}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!222 &1441797953874814897
