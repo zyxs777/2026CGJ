@@ -6,16 +6,9 @@ namespace KeepBallMoving
     {
         [SerializeField] private float maxSpeed = 22f;
         [SerializeField] private float minSpeed = 5f;
-        [SerializeField] private Color releaseArrowColor = new Color(1f, 0.95f, 0.25f, 0.9f);
-        [SerializeField] private float releaseArrowLength = 1.05f;
-        [SerializeField] private float releaseArrowThickness = 0.08f;
 
         private Rigidbody2D body;
         private SpriteRenderer spriteRenderer;
-        private Transform releaseArrowRoot;
-        private SpriteRenderer releaseArrowShaft;
-        private SpriteRenderer releaseArrowHeadLeft;
-        private SpriteRenderer releaseArrowHeadRight;
         private PlayerAgent holder;
         private float radius;
         private float holdRadius;
@@ -61,7 +54,6 @@ namespace KeepBallMoving
             spriteRenderer.sortingOrder = 30;
 
             transform.localScale = Vector3.one * (radius * 2f);
-            CreateReleaseArrow(sprite);
 
             body = GetComponent<Rigidbody2D>();
             if (body == null)
@@ -134,8 +126,6 @@ namespace KeepBallMoving
             {
                 lastFreeDirection = velocity.normalized;
             }
-
-            SetReleaseArrowVisible(false);
         }
 
         public void BeginHold(PlayerAgent newHolder, float minHoldRadius, float angularSpeed)
@@ -159,7 +149,6 @@ namespace KeepBallMoving
             Vector2 heldPosition = GetHeldPosition();
             body.position = heldPosition;
             transform.position = heldPosition;
-            UpdateReleaseArrow();
         }
 
         public void TickHold(float deltaTime)
@@ -173,7 +162,6 @@ namespace KeepBallMoving
             body.MovePosition(GetHeldPosition());
             body.velocity = Vector2.zero;
             body.angularVelocity = 0f;
-            UpdateReleaseArrow();
         }
 
         private Vector2 GetHeldPosition()
@@ -286,7 +274,6 @@ namespace KeepBallMoving
         {
             State = BallState.Free;
             holder = null;
-            SetReleaseArrowVisible(false);
             body.position = position;
             transform.position = position;
             body.bodyType = RigidbodyType2D.Dynamic;
@@ -312,97 +299,6 @@ namespace KeepBallMoving
             Vector2 perpendicular = new Vector2(-velocity.y, velocity.x).normalized * curveSign;
             body.AddForce(perpendicular * curveStrength, ForceMode2D.Force);
             curveRemainingTime -= deltaTime;
-        }
-
-        private void CreateReleaseArrow(Sprite sprite)
-        {
-            if (releaseArrowRoot != null)
-            {
-                return;
-            }
-
-            Sprite arrowSprite = RuntimeSpriteFactory.CreateSquareSprite("KeepBall_ReleaseArrow", Color.white);
-            releaseArrowRoot = new GameObject("ReleaseDirectionArrow").transform;
-            releaseArrowRoot.SetParent(transform);
-            releaseArrowRoot.localPosition = Vector3.zero;
-            releaseArrowRoot.localRotation = Quaternion.identity;
-
-            releaseArrowShaft = CreateArrowPart("Shaft", arrowSprite, 32);
-            releaseArrowHeadLeft = CreateArrowPart("HeadLeft", arrowSprite, 33);
-            releaseArrowHeadRight = CreateArrowPart("HeadRight", arrowSprite, 33);
-            SetReleaseArrowVisible(false);
-        }
-
-        private SpriteRenderer CreateArrowPart(string objectName, Sprite sprite, int sortingOrder)
-        {
-            GameObject partObject = new GameObject(objectName);
-            partObject.transform.SetParent(releaseArrowRoot);
-            partObject.transform.localPosition = Vector3.zero;
-            partObject.transform.localRotation = Quaternion.identity;
-
-            SpriteRenderer renderer = partObject.AddComponent<SpriteRenderer>();
-            renderer.sprite = sprite;
-            renderer.color = releaseArrowColor;
-            renderer.sortingOrder = sortingOrder;
-            return renderer;
-        }
-
-        private void UpdateReleaseArrow()
-        {
-            if (holder == null || releaseArrowRoot == null)
-            {
-                SetReleaseArrowVisible(false);
-                return;
-            }
-
-            Vector2 direction = (Position - holder.Position).normalized;
-            if (direction.sqrMagnitude < 0.001f)
-            {
-                direction = holder.Team == Team.Red ? Vector2.left : Vector2.right;
-            }
-
-            float parentScale = Mathf.Max(0.001f, transform.localScale.x);
-            float localBallRadius = radius / parentScale;
-            float localLength = releaseArrowLength / parentScale;
-            float localThickness = releaseArrowThickness / parentScale;
-            float localHeadLength = localLength * 0.28f;
-            float localHeadThickness = localThickness * 1.35f;
-
-            float angle = Mathf.Atan2(direction.y, direction.x) * Mathf.Rad2Deg;
-            releaseArrowRoot.localRotation = Quaternion.Euler(0f, 0f, angle);
-
-            releaseArrowShaft.transform.localPosition = new Vector3(localBallRadius + localLength * 0.5f, 0f, 0f);
-            releaseArrowShaft.transform.localRotation = Quaternion.identity;
-            releaseArrowShaft.transform.localScale = new Vector3(localLength, localThickness, 1f);
-
-            Vector3 headPosition = new Vector3(localBallRadius + localLength, 0f, 0f);
-            releaseArrowHeadLeft.transform.localPosition = headPosition;
-            releaseArrowHeadLeft.transform.localRotation = Quaternion.Euler(0f, 0f, 145f);
-            releaseArrowHeadLeft.transform.localScale = new Vector3(localHeadLength, localHeadThickness, 1f);
-
-            releaseArrowHeadRight.transform.localPosition = headPosition;
-            releaseArrowHeadRight.transform.localRotation = Quaternion.Euler(0f, 0f, -145f);
-            releaseArrowHeadRight.transform.localScale = new Vector3(localHeadLength, localHeadThickness, 1f);
-
-            SetReleaseArrowVisible(true);
-        }
-
-        private void SetReleaseArrowVisible(bool visible)
-        {
-            if (releaseArrowShaft != null)
-            {
-                releaseArrowShaft.enabled = visible;
-            }
-
-            if (releaseArrowHeadLeft != null)
-            {
-                releaseArrowHeadLeft.enabled = visible;
-            }
-
-            if (releaseArrowHeadRight != null)
-            {
-                releaseArrowHeadRight.enabled = visible;
-            }
         }
 
         private void OnCollisionEnter2D(Collision2D collision)

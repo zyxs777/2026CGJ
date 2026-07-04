@@ -1,0 +1,424 @@
+﻿# 《别让球停下来》Unity 原型 ReadMe
+
+## 1. 项目目标
+
+《别让球停下来》是一个 Unity 2D 顶视角足球原型。当前目标不是完整足球模拟，而是验证一个快速、可玩的核心循环：球不能轻易停下，玩家通过抓球、蓄力、传球、射门和天赋选择来对抗红方 AI。
+
+核心循环：
+
+```text
+球在大球场里持续运动
+蓝方和红方球员各自跑位
+蓝方由玩家控制抓球和释放
+红方由 AI 自动接球、传球和射门
+进球后计分并进入三选一天赋
+选完天赋后由失球方开球
+```
+
+当前优先级：
+
+```text
+先保证物理、控球、传球、射门、进球和回合重置可玩
+再逐步完善 AI 强度、天赋组合、视觉表现和手感
+```
+
+## 2. 当前技术方案
+
+当前使用 Unity 2D 实现。
+
+核心技术：
+
+- `Rigidbody2D`：足球物理运动。
+- `CircleCollider2D`：足球、球员和范围检测。
+- `BoxCollider2D`：球场边界和球门触发区域。
+- 运行时 Sprite：生成球场、球员、足球、范围圈等基础图形。
+- Resources Prefab：球员、足球、震荡波、幻影球员等对象可以通过预制体替换。
+- `OnGUI`：临时显示比分、状态、天赋选择界面和提示信息。
+
+当前原型不依赖手动摆场景。`KeepBallBootstrapper` 会在场景加载后自动创建 `KeepBallGameManager`。打开 Unity 场景后直接 Play，原型会自动生成：
+
+```text
+球场
+足球
+蓝方球员
+红方球员
+左右球门
+比分 UI
+天赋选择 UI
+```
+
+## 3. 主要脚本结构
+
+主要代码目录：
+
+```text
+Assets/Scripts/KeepBallMoving/
+```
+
+### 3.1 KeepBallTypes.cs
+
+定义基础枚举：
+
+```csharp
+Team
+GoalSide
+BallState
+PlayerRole
+```
+
+阵营：
+
+```text
+Blue
+Red
+```
+
+球员职责：
+
+```text
+Forward     前锋
+Midfielder  中场
+Defender    后卫
+```
+
+### 3.2 KeepBallBootstrapper.cs
+
+运行时自动创建 `KeepBallGameManager`。
+
+作用：
+
+```text
+如果场景里没有 KeepBallGameManager
+则自动创建一个
+```
+
+### 3.3 KeepBallGameManager.cs
+
+当前最核心的管理类，负责：
+
+- 创建运行时素材。
+- 设置相机。
+- 生成球场、边界、球门。
+- 生成蓝方和红方球员。
+- 生成足球。
+- 处理玩家输入。
+- 处理蓝方抓球、蓄力和释放。
+- 处理红方自动接球、传球和射门。
+- 处理球员基础跑位。
+- 处理进球计分和下一轮开球方。
+- 处理三选一天赋。
+- 处理天赋效果。
+- 显示临时 UI。
+
+### 3.4 PlayerAgent.cs
+
+负责单个球员的数据和表现。
+
+当前包含：
+
+- 阵营 `Team`。
+- 职责 `PlayerRole`。
+- 接球范围 `CatchRadius`。
+- 身体半径 `BodyRadius`。
+- 出生位置。
+- 控球范围圈显示。
+- 临时高亮。
+- 平滑击退。
+- 基础移动接口。
+
+### 3.5 BallController.cs
+
+负责足球状态和物理。
+
+当前包含：
+
+- 自由球状态。
+- Held 状态。
+- 重置足球。
+- 限制最大和最小球速。
+- Held 时围绕持球球员旋转。
+- 蓝方释放。
+- 红方朝目标释放。
+- 幻影足球配置。
+- 香蕉球曲线支持预留。
+
+Hold 半径规则：
+
+```text
+球进入控制范围后开始 Hold
+记录当时球到球员中心的距离
+这个距离作为绕圈半径
+如果距离太小，则使用 minHoldRadius
+```
+
+### 3.6 GoalTrigger.cs
+
+负责球门检测。
+
+规则：
+
+```text
+球进入右侧球门 -> 蓝方得分
+球进入左侧球门 -> 红方得分
+```
+
+进球后进入天赋选择，选完后由失球方开球。
+
+### 3.7 RuntimeSpriteFactory.cs
+
+负责运行时生成简单素材。
+
+当前生成：
+
+- 方形 Sprite。
+- 圆形 Sprite。
+- 圆环 Sprite。
+
+用于：
+
+- 球场底色。
+- 球场线条。
+- 球员。
+- 足球。
+- 控球范围圈。
+- fallback 特效。
+
+### 3.8 ShockwaveEffect.cs
+
+负责立场震荡波的视觉表现。
+
+实际击退由 `KeepBallGameManager` 计算；`ShockwaveEffect` 只负责预制体视觉的扩散、淡出和销毁。
+
+## 4. 当前已实现内容
+
+### 4.1 基础球场
+
+已经实现顶视角大球场。
+
+包含：
+
+- 绿色球场背景。
+- 上下左右边界。
+- 中线。
+- 中圈。
+- 左右禁区线。
+- 左右球门。
+- 球场边界反弹。
+
+默认尺寸：
+
+```text
+fieldWidth  = 30
+fieldHeight = 17
+```
+
+### 4.2 足球物理
+
+足球使用 `Rigidbody2D`。
+
+当前行为：
+
+- 无重力。
+- 在球场内反弹。
+- 有最大速度限制。
+- 有最小速度保护，避免球太快停死。
+- 进入球门后触发得分。
+- 被 Hold 时切换为 Kinematic。
+- 释放后切回 Dynamic 并设置速度。
+
+### 4.3 双方球员
+
+默认自动生成蓝方和红方球员。
+
+默认每队人数：
+
+```text
+playersPerTeam = 5
+```
+
+球员职责包括：
+
+```text
+前锋
+中场
+后卫
+```
+
+球员有控制范围圈。大脚怪前锋天赋会同步更新前锋的范围圈显示。
+
+### 4.4 蓝方玩家操作
+
+基础操作：
+
+```text
+空格：抓球
+按住空格：蓄力
+松开空格：释放足球
+R：重置当前回合
+N：重新开始比赛并清空天赋
+Z：拥有幻影球员天赋后，在本次传球中生成幻影球员
+```
+
+### 4.5 红方 AI
+
+红方会自动：
+
+- 根据控制范围接球。
+- 根据职责选择传球或射门。
+- 带有可调 AI 强度参数。
+- 传球和射门不再绝对精准，会受到误差、反应、决策和力度随机影响。
+
+相关参数在 `KeepBallGameManager` 的 `Red AI Difficulty` 区域。
+
+### 4.6 比分和足球规则
+
+上方 UI 显示蓝红比分。
+
+进球规则：
+
+```text
+蓝方进球 -> 红方下一轮开球
+红方进球 -> 蓝方下一轮开球
+```
+
+### 4.7 天赋系统
+
+每次进球后出现三选一天赋界面。
+
+规则：
+
+```text
+玩家从三个天赋中选择一个
+红方从同一组三个天赋中随机获得一个
+选择完成后开始下一轮
+```
+
+当前天赋：
+
+- 幻影足球：每次传球时朝传球方向生成一颗带随机角度的幻影足球。幻影足球弹射 3 次或被敌人拦截后消失，进球同样有效。
+- 大脚怪前锋：前锋接球范围提高 50%，并同步更新范围指示器。
+- 额外前锋：额外获得一个右方前锋球员。
+- 额外中场：额外获得一个右方中场球员。
+- 额外后卫：额外获得一个右方后卫球员。
+- 护球立场：己方接球时产生圆形震荡波，推开周围敌方球员。
+- 传球立场：己方传球时产生圆形震荡波，推开周围敌方球员。
+- 幻影球员：己方传球后可按 Z 在球所在位置生成幻影球员，球会绕着幻影球员运动。按空格从幻影球员位置踢出，踢出后幻影球员消失。每次传球只能触发一次。
+
+香蕉球暂时保留枚举和曲线代码，但当前不在可选天赋池中。
+
+## 5. 预制体资源
+
+当前 Resources 预制体目录：
+
+```text
+Assets/Resources/KeepBallMoving/
+```
+
+当前预制体：
+
+```text
+KeepBallPlayer.prefab
+KeepBallBall.prefab
+KeepBallBlueShockwave.prefab
+KeepBallRedShockwave.prefab
+KeepBallPhantomPlayer.prefab
+```
+
+用途：
+
+- `KeepBallPlayer.prefab`：默认球员预制体。
+- `KeepBallBall.prefab`：足球预制体。
+- `KeepBallBlueShockwave.prefab`：蓝方立场特效。
+- `KeepBallRedShockwave.prefab`：红方立场特效。
+- `KeepBallPhantomPlayer.prefab`：幻影球员预制体。
+
+如果 Inspector 中没有手动指定，`KeepBallGameManager` 会从 Resources 自动加载默认预制体。
+
+## 6. 常用调参位置
+
+### 6.1 控球与释放
+
+```csharp
+minHoldRadius
+holdAngularSpeed
+minReleaseSpeed
+maxReleaseSpeed
+maxChargeTime
+maxBallSpeed
+```
+
+### 6.2 球员移动
+
+```csharp
+blueMoveSpeed
+redMoveSpeed
+forwardMoveSpeedMultiplier
+midfielderMoveSpeedMultiplier
+defenderMoveSpeedMultiplier
+holderMoveSpeedMultiplier
+separationRadius
+separationStrength
+```
+
+### 6.3 红方 AI 强度
+
+```csharp
+redAiStrength
+redAutoCatchSkill
+redDecisionSkill
+redPassSkill
+redShotSkill
+redKickPowerSkill
+redMovementSkill
+redMaxCatchRadiusPenalty
+redMaxReactionDelayPenalty
+redMaxHoldDelayJitter
+redMaxDecisionMistakeChance
+redMaxPassAimError
+redMaxShotAimError
+redMaxKickSpeedRandomness
+```
+
+### 6.4 天赋参数
+
+```csharp
+phantomBallSpawnOffset
+phantomBallSpeedMultiplier
+phantomBallRandomAngle
+phantomBallMaxBounces
+bigfootForwardCatchMultiplier
+shieldFieldRadius
+shieldFieldPushDistance
+passFieldRadius
+passFieldPushDistance
+shockwavePushDuration
+shockwaveEffectDuration
+phantomPlayerKickSpeed
+phantomPlayerHoldAngularSpeed
+phantomPlayerColor
+```
+
+## 7. 当前验证方式
+
+推荐使用下面的命令验证脚本编译：
+
+```powershell
+dotnet build Assembly-CSharp.csproj --no-restore -v:minimal -m:1 -p:BaseIntermediateOutputPath=Temp\ObjVerifySingle\
+```
+
+如果成功，应看到：
+
+```text
+0 个警告
+0 个错误
+```
+
+## 8. 后续建议
+
+优先级建议：
+
+- 把临时 `OnGUI` UI 替换成正式 Unity UI 预制体。
+- 将天赋数据从硬编码迁移到 `ScriptableObject`。
+- 为天赋卡补正式图标资源。
+- 为震荡波、幻影足球、幻影球员添加更明显的视觉反馈。
+- 继续调红方 AI，保证挑战性和可玩性之间的平衡。

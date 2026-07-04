@@ -165,12 +165,18 @@ namespace KeepBallMoving
 
         public void ResetToSpawn()
         {
+            ResetToPosition(spawnPosition);
+        }
+
+        public void ResetToPosition(Vector2 position)
+        {
             if (knockbackRoutine != null)
             {
                 StopCoroutine(knockbackRoutine);
                 knockbackRoutine = null;
             }
 
+            spawnPosition = position;
             transform.position = spawnPosition;
             SetCatchHighlighted(false);
         }

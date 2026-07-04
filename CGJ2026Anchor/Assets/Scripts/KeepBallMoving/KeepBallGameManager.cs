@@ -103,8 +103,8 @@ namespace KeepBallMoving
         private bool goalLocked;
         private int blueScore;
         private int redScore;
-        private string stateText = "空格抓球";
-        private string messageText = "基础原型：空格抓球，松开释放";
+        private string stateText = "空格/A 抓球";
+        private string messageText = "基础原型：空格/A 抓球，松开释放";
         private float messageUntil;
         private float autoControlCooldownUntil;
         private float redCurrentHoldDelay;
@@ -113,6 +113,9 @@ namespace KeepBallMoving
         private PlayerAgent activePhantomPlayer;
         private Team nextKickoffTeam = Team.Blue;
         private bool talentSelectionOpen;
+        private int selectedTalentIndex;
+        private float nextTalentMoveInputTime;
+        private bool rightStickHorizontalMissing;
         private readonly TalentOption[] currentTalentOptions = new TalentOption[TalentChoiceCount];
         private string lastBlueTalentText = "暂无";
         private string lastRedTalentText = "暂无";
@@ -165,7 +168,18 @@ namespace KeepBallMoving
 
         private void Update()
         {
-            if (goalLocked || ball == null)
+            if (ball == null)
+            {
+                return;
+            }
+
+            if (talentSelectionOpen)
+            {
+                HandleTalentSelectionInput();
+                return;
+            }
+
+            if (goalLocked)
             {
                 return;
             }
@@ -191,9 +205,9 @@ namespace KeepBallMoving
 
                 if (activePhantomPlayer != null && ball.Holder == activePhantomPlayer)
                 {
-                    stateText = "幻影球员控球：按空格踢出";
+                    stateText = "幻影球员控球：按空格/A 踢出";
 
-                    if (Input.GetKeyDown(KeyCode.Space))
+                    if (IsPrimaryActionDown())
                     {
                         ReleasePhantomPlayerBall();
                     }
@@ -217,9 +231,9 @@ namespace KeepBallMoving
 
                 if (!blueHoldChargeArmed)
                 {
-                    stateText = "蓝方持球：按住空格蓄力";
+                    stateText = "蓝方持球：按住空格/A 蓄力";
 
-                    if (Input.GetKeyDown(KeyCode.Space))
+                    if (IsPrimaryActionDown())
                     {
                         blueHoldChargeArmed = true;
                         chargeTime = 0f;
@@ -232,7 +246,7 @@ namespace KeepBallMoving
                 chargeTime += Time.deltaTime;
                 stateText = $"蓝方蓄力 {Mathf.Clamp01(chargeTime / maxChargeTime):P0}";
 
-                if (Input.GetKeyUp(KeyCode.Space))
+                if (IsPrimaryActionUp())
                 {
                     ReleaseHeldBall();
                 }
@@ -240,15 +254,15 @@ namespace KeepBallMoving
                 return;
             }
 
-            if (Input.GetKeyDown(KeyCode.Z) && TryActivatePhantomPlayer())
+            if (IsPhantomActionDown() && TryActivatePhantomPlayer())
             {
                 return;
             }
 
             UpdateControlHighlights();
-            stateText = FindNearestCatchablePlayer() != null ? "可抓球：按空格" : "等待球靠近蓝方";
+            stateText = FindNearestCatchablePlayer() != null ? "可抓球：按空格/A" : "等待球靠近蓝方";
 
-            if (Input.GetKeyDown(KeyCode.Space))
+            if (IsPrimaryActionDown())
             {
                 TryCatchBall();
                 return;
@@ -259,6 +273,98 @@ namespace KeepBallMoving
                 return;
             }
 
+        }
+
+        private bool IsPrimaryActionDown()
+        {
+            return Input.GetKeyDown(KeyCode.Space) || Input.GetKeyDown(KeyCode.JoystickButton0);
+        }
+
+        private bool IsPrimaryActionUp()
+        {
+            return Input.GetKeyUp(KeyCode.Space) || Input.GetKeyUp(KeyCode.JoystickButton0);
+        }
+
+        private bool IsPhantomActionDown()
+        {
+            return Input.GetKeyDown(KeyCode.Z) || Input.GetKeyDown(KeyCode.JoystickButton1);
+        }
+
+        private void HandleTalentSelectionInput()
+        {
+            int direction = GetTalentSelectionDirection();
+            if (direction != 0 && Time.unscaledTime >= nextTalentMoveInputTime)
+            {
+                selectedTalentIndex = Mathf.Clamp(selectedTalentIndex + direction, 0, TalentChoiceCount - 1);
+                nextTalentMoveInputTime = Time.unscaledTime + 0.18f;
+            }
+
+            if (IsPrimaryActionDown())
+            {
+                SelectTalent(selectedTalentIndex);
+            }
+        }
+
+        private int GetTalentSelectionDirection()
+        {
+            if (Input.GetKeyDown(KeyCode.LeftArrow))
+            {
+                return -1;
+            }
+
+            if (Input.GetKeyDown(KeyCode.RightArrow))
+            {
+                return 1;
+            }
+
+            float axis = GetAxisRawSafe("Horizontal");
+            if (Mathf.Abs(axis) < 0.55f)
+            {
+                axis = GetRightStickHorizontal();
+            }
+
+            if (axis <= -0.55f)
+            {
+                return -1;
+            }
+
+            if (axis >= 0.55f)
+            {
+                return 1;
+            }
+
+            nextTalentMoveInputTime = 0f;
+            return 0;
+        }
+
+        private float GetAxisRawSafe(string axisName)
+        {
+            try
+            {
+                return Input.GetAxisRaw(axisName);
+            }
+            catch (System.ArgumentException)
+            {
+                return 0f;
+            }
+        }
+
+        private float GetRightStickHorizontal()
+        {
+            if (rightStickHorizontalMissing)
+            {
+                return 0f;
+            }
+
+            try
+            {
+                return Input.GetAxisRaw("RightStickHorizontal");
+            }
+            catch (System.ArgumentException)
+            {
+                rightStickHorizontalMissing = true;
+                return 0f;
+            }
         }
 
         private void CreateRuntimeAssets()
@@ -487,6 +593,45 @@ namespace KeepBallMoving
             return ClampInsideField(new Vector2(x, lane));
         }
 
+        private Vector2 GetResetFormationPosition(Team team, PlayerAgent player)
+        {
+            List<PlayerAgent> teamPlayers = team == Team.Blue ? bluePlayers : redPlayers;
+            int roleSlot = GetRoleSlot(teamPlayers, player);
+            int roleCount = CountRole(teamPlayers, player.Role);
+            float lane = GetLaneForRoleSlot(roleSlot, roleCount, fieldHeight * 0.34f);
+
+            float x;
+            if (extraPlayers.Contains(player))
+            {
+                float rightSideX = fieldWidth * 0.22f;
+                float teamSide = team == Team.Blue ? -1f : 1f;
+                float fallbackRoleX = teamSide * fieldWidth * GetRoleFormationRatio(player.Role);
+                x = Mathf.Lerp(fallbackRoleX, rightSideX, 0.65f);
+            }
+            else
+            {
+                float side = team == Team.Blue ? -1f : 1f;
+                x = side * fieldWidth * GetRoleFormationRatio(player.Role);
+            }
+
+            return ClampInsideField(new Vector2(x, lane));
+        }
+
+        private float GetRoleFormationRatio(PlayerRole role)
+        {
+            return role == PlayerRole.Defender ? 0.36f : role == PlayerRole.Midfielder ? 0.12f : -0.16f;
+        }
+
+        private void ResetTeamToFormation(Team team)
+        {
+            List<PlayerAgent> teamPlayers = team == Team.Blue ? bluePlayers : redPlayers;
+            foreach (PlayerAgent player in teamPlayers)
+            {
+                player.ResetToPosition(GetResetFormationPosition(team, player));
+                SyncPlayerControlRangeVisual(player);
+            }
+        }
+
         private PlayerAgent AddExtraPlayer(Team team, PlayerRole role)
         {
             if (playersRoot == null)
@@ -564,8 +709,8 @@ namespace KeepBallMoving
             redScore = 0;
             nextKickoffTeam = Team.Blue;
             talentSelectionOpen = false;
-            lastBlueTalentText = "鏆傛棤";
-            lastRedTalentText = "鏆傛棤";
+            lastBlueTalentText = "暂无";
+            lastRedTalentText = "暂无";
             ClearExtraPlayers();
             ResetTalents();
             ResetRound();
@@ -576,6 +721,8 @@ namespace KeepBallMoving
         {
             goalLocked = false;
             talentSelectionOpen = false;
+            selectedTalentIndex = 0;
+            nextTalentMoveInputTime = 0f;
             chargeTime = 0f;
             blueHoldChargeArmed = false;
             bluePhantomPlayerReady = false;
@@ -584,17 +731,8 @@ namespace KeepBallMoving
             DestroyActivePhantomPlayer();
             ClearPhantomBalls();
 
-            foreach (PlayerAgent player in bluePlayers)
-            {
-                player.ResetToSpawn();
-                SyncPlayerControlRangeVisual(player);
-            }
-
-            foreach (PlayerAgent player in redPlayers)
-            {
-                player.ResetToSpawn();
-                SyncPlayerControlRangeVisual(player);
-            }
+            ResetTeamToFormation(Team.Blue);
+            ResetTeamToFormation(Team.Red);
 
             PlayerAgent kickoffPlayer = FindKickoffPlayer(nextKickoffTeam);
             if (kickoffPlayer != null)
@@ -610,7 +748,7 @@ namespace KeepBallMoving
                     redCurrentHoldDelay = RollRedHoldDelay();
                 }
 
-                ShowMessage($"{GetTeamLabel(nextKickoffTeam)}寮€鐞冿細{kickoffPlayer.name}");
+                ShowMessage($"{GetTeamLabel(nextKickoffTeam)}开球：{kickoffPlayer.name}");
             }
             else
             {
@@ -628,7 +766,7 @@ namespace KeepBallMoving
             PlayerAgent catcher = FindNearestCatchablePlayer();
             if (catcher == null)
             {
-                ShowMessage("娌℃湁钃濇柟鍦ㄦ姄鐞冭寖鍥村唴");
+                ShowMessage("没有蓝方在抓球范围内");
                 return;
             }
 
@@ -796,13 +934,13 @@ namespace KeepBallMoving
 
             if (holder.Role == PlayerRole.Defender && TryFindRedPassTarget(PlayerRole.Midfielder, holder, out PlayerAgent midfielder))
             {
-                message = $"绾㈡柟鍚庡崼浼犱腑鍦猴細{midfielder.name}";
+                message = $"红方后卫传中场：{midfielder.name}";
                 return ApplyRedPassAimError(midfielder.Position);
             }
 
             if (holder.Role == PlayerRole.Midfielder && TryFindRedPassTarget(PlayerRole.Forward, holder, out PlayerAgent forward))
             {
-                message = $"绾㈡柟涓満浼犲墠閿嬶細{forward.name}";
+                message = $"红方中场传前锋：{forward.name}";
                 return ApplyRedPassAimError(forward.Position);
             }
 
@@ -1377,6 +1515,8 @@ namespace KeepBallMoving
 
         private void GenerateTalentChoices()
         {
+            selectedTalentIndex = 0;
+            nextTalentMoveInputTime = 0f;
             TalentId[] pool =
             {
                 TalentId.PhantomFootball,
@@ -1464,7 +1604,7 @@ namespace KeepBallMoving
                     {
                         Id = id,
                         Name = "幻影球员",
-                        Description = "己方传球后可按 Z 在球所在位置生成幻影球员，球会绕着幻影球员运动。按空格从幻影球员位置踢出，踢出后幻影球员消失。每次传球只能触发一次。",
+                        Description = "己方传球后可按 Z/B 在球所在位置生成幻影球员，球会绕着幻影球员运动。按空格/A 从幻影球员位置踢出，踢出后幻影球员消失。每次传球只能触发一次。",
                         AccentColor = new Color(0.42f, 0.92f, 1f, 1f)
                     };
                 default:
@@ -1658,7 +1798,7 @@ namespace KeepBallMoving
 
                     Destroy(phantom.gameObject);
                     phantomBalls.RemoveAt(i);
-                    ShowMessage($"{GetTeamLabel(player.Team)}鎷︽埅骞诲奖瓒崇悆");
+                    ShowMessage($"{GetTeamLabel(player.Team)}拦截幻影足球");
                     break;
                 }
             }
@@ -1848,7 +1988,7 @@ namespace KeepBallMoving
 
         private string GetTeamLabel(Team team)
         {
-            return team == Team.Blue ? "钃濇柟" : "绾㈡柟";
+            return team == Team.Blue ? "蓝方" : "红方";
         }
 
         private void OnGUI()
@@ -1862,7 +2002,7 @@ namespace KeepBallMoving
                 normal = { textColor = Color.white }
             };
 
-            string message = Time.time <= messageUntil ? messageText : "空格抓球 / 松开释放，R 重置，N 重新开始";
+            string message = Time.time <= messageUntil ? messageText : "空格/A 抓球和蓄力，Z/B 召唤幻影球员，R 重置，N 重新开始";
             float charge01 = Mathf.Clamp01(chargeTime / maxChargeTime);
             string text =
                 $"《别让球停下来》Unity 基础原型\n" +
@@ -1910,7 +2050,7 @@ namespace KeepBallMoving
                 normal = { textColor = Color.white }
             };
 
-            GUI.Label(new Rect(0f, 76f, Screen.width, 44f), "閫夋嫨鏂板ぉ璧嬶紒", titleStyle);
+            GUI.Label(new Rect(0f, 76f, Screen.width, 44f), "选择新天赋！", titleStyle);
 
             GUIStyle infoStyle = new GUIStyle(GUI.skin.label)
             {
@@ -1919,7 +2059,8 @@ namespace KeepBallMoving
                 normal = { textColor = new Color(0.84f, 0.88f, 0.94f, 1f) }
             };
 
-            GUI.Label(new Rect(0f, 122f, Screen.width, 24f), $"閫夋嫨涓€涓珛鍗崇敓鏁堢殑澶╄祴锛涚孩鏂瑰皢闅忔満鑾峰緱涓€涓€備笂娆★細钃濇柟 {lastBlueTalentText} / 绾㈡柟 {lastRedTalentText}", infoStyle);
+            GUI.Label(new Rect(0f, 122f, Screen.width, 24f), $"选择一个立即生效的天赋；红方将随机获得一个。上次：蓝方 {lastBlueTalentText} / 红方 {lastRedTalentText}", infoStyle);
+            GUI.Label(new Rect(0f, 146f, Screen.width, 22f), "手柄：左右摇杆选择，A 确认", infoStyle);
 
             float cardWidth = 240f;
             float cardHeight = 380f;
@@ -1948,7 +2089,12 @@ namespace KeepBallMoving
             {
                 TalentOption option = currentTalentOptions[i];
                 Rect cardRect = new Rect(startX + i * (cardWidth + gap), cardY, cardWidth, cardHeight);
-                DrawTalentCard(cardRect, option, cardTitleStyle, descriptionStyle);
+                if (cardRect.Contains(Event.current.mousePosition))
+                {
+                    selectedTalentIndex = i;
+                }
+
+                DrawTalentCard(cardRect, option, cardTitleStyle, descriptionStyle, i == selectedTalentIndex);
 
                 if (Event.current.type == EventType.MouseUp && cardRect.Contains(Event.current.mousePosition))
                 {
@@ -1958,11 +2104,17 @@ namespace KeepBallMoving
             }
         }
 
-        private void DrawTalentCard(Rect cardRect, TalentOption option, GUIStyle titleStyle, GUIStyle descriptionStyle)
+        private void DrawTalentCard(Rect cardRect, TalentOption option, GUIStyle titleStyle, GUIStyle descriptionStyle, bool selected)
         {
-            DrawFilledRect(cardRect, new Color(0.09f, 0.11f, 0.15f, 1f));
-            DrawBorder(cardRect, new Color(0.22f, 0.27f, 0.36f, 1f), 4f);
+            Color cardColor = selected ? new Color(0.13f, 0.16f, 0.22f, 1f) : new Color(0.09f, 0.11f, 0.15f, 1f);
+            Color borderColor = selected ? option.AccentColor : new Color(0.22f, 0.27f, 0.36f, 1f);
+            DrawFilledRect(cardRect, cardColor);
+            DrawBorder(cardRect, borderColor, selected ? 7f : 4f);
             DrawBorder(new Rect(cardRect.x + 6f, cardRect.y + 6f, cardRect.width - 12f, cardRect.height - 12f), new Color(0.04f, 0.05f, 0.07f, 1f), 2f);
+            if (selected)
+            {
+                DrawBorder(new Rect(cardRect.x + 10f, cardRect.y + 10f, cardRect.width - 20f, cardRect.height - 20f), new Color(1f, 1f, 1f, 0.45f), 2f);
+            }
 
             GUI.Label(new Rect(cardRect.x + 12f, cardRect.y + 12f, cardRect.width - 24f, 36f), option.Name, titleStyle);
 
@@ -1983,7 +2135,7 @@ namespace KeepBallMoving
                 normal = { textColor = new Color(0.78f, 0.84f, 0.95f, 1f) }
             };
 
-            GUI.Label(new Rect(cardRect.x + 16f, cardRect.yMax - 36f, cardRect.width - 32f, 22f), "鐐瑰嚮閫夋嫨", chooseStyle);
+            GUI.Label(new Rect(cardRect.x + 16f, cardRect.yMax - 36f, cardRect.width - 32f, 22f), selected ? "A 确认 / 点击选择" : "摇杆左右切换", chooseStyle);
         }
 
         private void DrawIconPlaceholderLabel(Rect iconRect)
