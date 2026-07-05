@@ -232,6 +232,8 @@ namespace KeepBallMoving
         private bool talentSelectionOpen;
         private int selectedTalentIndex;
         private float nextTalentMoveInputTime;
+        private int selectedMainMenuIndex;
+        private float nextMainMenuMoveInputTime;
         private bool rightStickHorizontalMissing;
         private bool showInputDebug;
         private readonly HashSet<string> missingInputAxes = new HashSet<string>();
@@ -331,6 +333,7 @@ namespace KeepBallMoving
 
             if (mainMenuOpen)
             {
+                HandleMainMenuInput();
                 return;
             }
 
@@ -464,6 +467,95 @@ namespace KeepBallMoving
         private bool IsPrimaryActionDown()
         {
             return IsPrimaryActionDown(Team.Blue);
+        }
+
+        private void HandleMainMenuInput()
+        {
+            if (mainMenuUi == null)
+            {
+                return;
+            }
+
+            int optionCount = Mathf.Max(0, mainMenuUi.OptionCount);
+            if (optionCount <= 0)
+            {
+                return;
+            }
+
+            selectedMainMenuIndex = Mathf.Clamp(selectedMainMenuIndex, 0, optionCount - 1);
+            int direction = GetMainMenuSelectionDirection();
+            if (direction != 0 && Time.unscaledTime >= nextMainMenuMoveInputTime)
+            {
+                selectedMainMenuIndex = WrapIndex(selectedMainMenuIndex + direction, optionCount);
+                nextMainMenuMoveInputTime = Time.unscaledTime + 0.18f;
+                mainMenuUi.SelectOption(selectedMainMenuIndex);
+            }
+            else
+            {
+                mainMenuUi.SelectOption(selectedMainMenuIndex);
+            }
+
+            if (IsMainMenuConfirmDown())
+            {
+                mainMenuUi.ConfirmOption(selectedMainMenuIndex);
+            }
+        }
+
+        private int GetMainMenuSelectionDirection()
+        {
+            if (Input.GetKeyDown(KeyCode.LeftArrow) || Input.GetKeyDown(KeyCode.UpArrow) || Input.GetKeyDown(KeyCode.A) || Input.GetKeyDown(KeyCode.W))
+            {
+                return -1;
+            }
+
+            if (Input.GetKeyDown(KeyCode.RightArrow) || Input.GetKeyDown(KeyCode.DownArrow) || Input.GetKeyDown(KeyCode.D) || Input.GetKeyDown(KeyCode.S))
+            {
+                return 1;
+            }
+
+            float axis = KeepBallNewInput.GetHorizontal(0, true);
+            if (Mathf.Abs(axis) < 0.55f)
+            {
+                axis = GetAxisRawSafe("Horizontal");
+            }
+
+            if (Mathf.Abs(axis) < 0.55f)
+            {
+                axis = GetRightStickHorizontal();
+            }
+
+            if (axis <= -0.55f)
+            {
+                return -1;
+            }
+
+            if (axis >= 0.55f)
+            {
+                return 1;
+            }
+
+            nextMainMenuMoveInputTime = 0f;
+            return 0;
+        }
+
+        private bool IsMainMenuConfirmDown()
+        {
+            return Input.GetKeyDown(KeyCode.Space) ||
+                Input.GetKeyDown(KeyCode.Return) ||
+                Input.GetKeyDown(KeyCode.KeypadEnter) ||
+                KeepBallNewInput.IsPrimaryDown(0, true) ||
+                KeepBallNewInput.IsLegacyPrimaryDown(0, true);
+        }
+
+        private static int WrapIndex(int index, int count)
+        {
+            if (count <= 0)
+            {
+                return 0;
+            }
+
+            int wrapped = index % count;
+            return wrapped < 0 ? wrapped + count : wrapped;
         }
 
         private bool IsPrimaryActionDown(Team team)
@@ -1670,6 +1762,7 @@ namespace KeepBallMoving
         {
             matchMode = selectedMode;
             mainMenuOpen = false;
+            nextMainMenuMoveInputTime = 0f;
             if (mainMenuUi != null)
             {
                 mainMenuUi.SetVisible(false);
@@ -1685,10 +1778,13 @@ namespace KeepBallMoving
         {
             StopGameplayBgm();
             mainMenuOpen = true;
+            selectedMainMenuIndex = 0;
+            nextMainMenuMoveInputTime = 0f;
             SetupMainMenuUi();
             if (mainMenuUi != null)
             {
                 mainMenuUi.SetVisible(true);
+                mainMenuUi.SelectOption(selectedMainMenuIndex);
             }
 
             RestoreGoalPresentationState();

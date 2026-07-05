@@ -513,7 +513,13 @@ namespace KeepBallMoving
                     return gamepadAxis;
                 }
 
-                return gamepad.rightStick.x.ReadValue();
+                float rightStickAxis = gamepad.rightStick.x.ReadValue();
+                if (Mathf.Abs(rightStickAxis) >= 0.55f)
+                {
+                    return rightStickAxis;
+                }
+
+                return gamepad.dpad.x.ReadValue();
             }
 
             Joystick joystick = device as Joystick;

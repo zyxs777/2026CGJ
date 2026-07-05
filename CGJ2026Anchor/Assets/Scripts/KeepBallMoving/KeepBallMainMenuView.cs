@@ -28,6 +28,8 @@ namespace KeepBallMoving
         [SerializeField] private Text pvpLabel;
         [SerializeField] private Text exitLabel;
 
+        private Button[] menuButtons;
+
         public void Initialize(Action onPve, Action onPvp, Action onExit)
         {
             ResolveReferences();
@@ -35,11 +37,66 @@ namespace KeepBallMoving
             BindButton(pveButton, onPve);
             BindButton(pvpButton, onPvp);
             BindButton(exitButton, onExit);
+            RefreshButtonList();
+            SelectOption(0);
         }
 
         public void SetVisible(bool visible)
         {
             gameObject.SetActive(visible);
+            if (visible)
+            {
+                ResolveReferences();
+                RefreshButtonList();
+                SelectOption(0);
+            }
+        }
+
+        public int OptionCount
+        {
+            get
+            {
+                RefreshButtonList();
+                return menuButtons != null ? menuButtons.Length : 0;
+            }
+        }
+
+        public void SelectOption(int index)
+        {
+            RefreshButtonList();
+            if (menuButtons == null || menuButtons.Length == 0)
+            {
+                return;
+            }
+
+            int safeIndex = Mathf.Clamp(index, 0, menuButtons.Length - 1);
+            Button button = menuButtons[safeIndex];
+            if (button == null)
+            {
+                return;
+            }
+
+            button.Select();
+            if (EventSystem.current != null)
+            {
+                EventSystem.current.SetSelectedGameObject(button.gameObject);
+            }
+        }
+
+        public void ConfirmOption(int index)
+        {
+            RefreshButtonList();
+            if (menuButtons == null || menuButtons.Length == 0)
+            {
+                return;
+            }
+
+            int safeIndex = Mathf.Clamp(index, 0, menuButtons.Length - 1);
+            Button button = menuButtons[safeIndex];
+            if (button != null && button.interactable)
+            {
+                button.onClick.Invoke();
+            }
         }
 
         private void Awake()
@@ -80,6 +137,7 @@ namespace KeepBallMoving
             pveLabel = ResolveLabel(pveButton, pveLabel);
             pvpLabel = ResolveLabel(pvpButton, pvpLabel);
             exitLabel = ResolveLabel(exitButton, exitLabel);
+            RefreshButtonList();
 
             LoadCoverSpriteIfNeeded();
             if (coverImage != null && coverImage.sprite == null && coverSprite != null)
@@ -107,6 +165,11 @@ namespace KeepBallMoving
             }
 
             coverSprite = Resources.Load<Sprite>(coverSpriteResourcePath);
+        }
+
+        private void RefreshButtonList()
+        {
+            menuButtons = new[] { pveButton, pvpButton, exitButton };
         }
 
         private T ResolveChild<T>(T current, string childName) where T : Component
