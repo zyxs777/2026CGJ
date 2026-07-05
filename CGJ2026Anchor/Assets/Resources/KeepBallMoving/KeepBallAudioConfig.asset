@@ -1,0 +1,29 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7b04dbaae7fd4d84aa72222e85ec7231, type: 3}
+  m_Name: KeepBallAudioConfig
+  m_EditorClassIdentifier: 
+  kickClip: {fileID: 8300000, guid: 3ed793cf22d0a7742aa592208837738a, type: 3}
+  waveClip: {fileID: 8300000, guid: 129568ca3c9ebdd45b7d551405e316a6, type: 3}
+  goalClip: {fileID: 8300000, guid: b6b43f3d5ee3a4d4997b3fcb286a40fa, type: 3}
+  roundStartClip: {fileID: 8300000, guid: 2681987189fd876419f6d419102035c4, type: 3}
+  gameplayBgmClip: {fileID: 8300000, guid: 0c38c1d696d657b4fb1197058fb60e11, type: 3}
+  kickClipResourcePath: KeepBallMoving/kick
+  waveClipResourcePath: KeepBallMoving/wave
+  goalClipResourcePath: KeepBallMoving/happy
+  roundStartClipResourcePath: KeepBallMoving/start
+  gameplayBgmResourcePath: KeepBallMoving/bgm_play
+  kickVolume: 0.5
+  waveVolume: 0.5
+  goalVolume: 0.5
+  roundStartVolume: 0.5
+  gameplayBgmVolume: 0.15

@@ -32,6 +32,10 @@ namespace KeepBallMoving
         [SerializeField] private KeepBallScoreboard scoreboardPrefab;
         [SerializeField] private KeepBallMainMenuView mainMenuPrefab;
 
+        [Header("Audio")]
+        [SerializeField] private KeepBallAudioConfig audioConfig;
+        [SerializeField] private string audioConfigResourcePath = "KeepBallMoving/KeepBallAudioConfig";
+
         [Header("Actors")]
         [SerializeField] private int playersPerTeam = 5;
         [SerializeField] private float playerRadius = 0.5f;
@@ -177,6 +181,8 @@ namespace KeepBallMoving
         private Sprite centerRingSprite;
         private KeepBallScoreboard scoreboardUi;
         private KeepBallMainMenuView mainMenuUi;
+        private AudioSource sfxAudioSource;
+        private AudioSource bgmAudioSource;
         private Canvas talentCanvas;
         private RectTransform blueTalentPanel;
         private RectTransform redTalentPanel;
@@ -258,6 +264,7 @@ namespace KeepBallMoving
         private const string DefaultGoalEffectPrefabPath = "KeepBallMoving/GoalEffect";
         private const string DefaultFieldVisualPrefabPath = "KeepBallMoving/KeepBallField";
         private const string DefaultFieldSpritePath = "KeepBallMoving/BG2";
+        private const string DefaultAudioConfigPath = "KeepBallMoving/KeepBallAudioConfig";
         private const string DefaultTalentIconFolderPath = "KeepBallMoving/TalentIcons";
         private const string DefaultRedTalentMarkerSpriteName = "target_0";
         private const string DefaultBlueTalentMarkerSpriteName = "target_1";
@@ -315,6 +322,8 @@ namespace KeepBallMoving
 
         private void Update()
         {
+            UpdateAudioRuntimeState();
+
             if (ball == null)
             {
                 return;
@@ -982,6 +991,12 @@ namespace KeepBallMoving
                 fieldVisualPrefab = Resources.Load<GameObject>(DefaultFieldVisualPrefabPath);
             }
 
+            if (audioConfig == null)
+            {
+                string configPath = string.IsNullOrWhiteSpace(audioConfigResourcePath) ? DefaultAudioConfigPath : audioConfigResourcePath;
+                audioConfig = Resources.Load<KeepBallAudioConfig>(configPath);
+            }
+
             if (fieldVisualPrefab == null && fieldSprite == null)
             {
                 string spritePath = string.IsNullOrWhiteSpace(fieldSpriteResourcePath) ? DefaultFieldSpritePath : fieldSpriteResourcePath;
@@ -1022,6 +1037,118 @@ namespace KeepBallMoving
             gameplayCamera = mainCamera;
             defaultCameraPosition = mainCamera.transform.position;
             defaultCameraOrthographicSize = 12;
+        }
+
+        private void PlayKickSound()
+        {
+            if (audioConfig != null)
+            {
+                PlayGameSound(audioConfig.KickClip, audioConfig.KickVolume);
+            }
+        }
+
+        private void PlayWaveSound()
+        {
+            if (audioConfig != null)
+            {
+                PlayGameSound(audioConfig.WaveClip, audioConfig.WaveVolume);
+            }
+        }
+
+        private void PlayGoalSound()
+        {
+            if (audioConfig != null)
+            {
+                PlayGameSound(audioConfig.GoalClip, audioConfig.GoalVolume);
+            }
+        }
+
+        private void PlayRoundStartSound()
+        {
+            if (audioConfig != null)
+            {
+                PlayGameSound(audioConfig.RoundStartClip, audioConfig.RoundStartVolume);
+            }
+        }
+
+        private void PlayGameSound(AudioClip clip, float volume)
+        {
+            if (clip == null || volume <= 0f)
+            {
+                return;
+            }
+
+            if (sfxAudioSource == null)
+            {
+                sfxAudioSource = CreateAudioSource("KeepBallSfxAudio", false);
+            }
+
+            sfxAudioSource.PlayOneShot(clip, Mathf.Clamp01(volume));
+        }
+
+        private void PlayGameplayBgm()
+        {
+            if (audioConfig == null)
+            {
+                return;
+            }
+
+            AudioClip clip = audioConfig.GameplayBgmClip;
+            if (clip == null || audioConfig.GameplayBgmVolume <= 0f)
+            {
+                StopGameplayBgm();
+                return;
+            }
+
+            if (bgmAudioSource == null)
+            {
+                bgmAudioSource = CreateAudioSource("KeepBallBgmAudio", true);
+            }
+
+            bgmAudioSource.clip = clip;
+            bgmAudioSource.volume = audioConfig.GameplayBgmVolume;
+            bgmAudioSource.loop = true;
+            if (!bgmAudioSource.isPlaying)
+            {
+                bgmAudioSource.Play();
+            }
+        }
+
+        private void UpdateAudioRuntimeState()
+        {
+            if (audioConfig == null || bgmAudioSource == null || bgmAudioSource.clip == null)
+            {
+                return;
+            }
+
+            bgmAudioSource.volume = audioConfig.GameplayBgmVolume;
+            if (audioConfig.GameplayBgmVolume <= 0f && bgmAudioSource.isPlaying)
+            {
+                bgmAudioSource.Pause();
+            }
+            else if (!mainMenuOpen && audioConfig.GameplayBgmVolume > 0f && !bgmAudioSource.isPlaying)
+            {
+                bgmAudioSource.UnPause();
+            }
+        }
+
+        private void StopGameplayBgm()
+        {
+            if (bgmAudioSource != null)
+            {
+                bgmAudioSource.Stop();
+            }
+        }
+
+        private AudioSource CreateAudioSource(string sourceName, bool loop)
+        {
+            GameObject sourceObject = new GameObject(sourceName);
+            sourceObject.transform.SetParent(transform, false);
+            AudioSource source = sourceObject.AddComponent<AudioSource>();
+            source.playOnAwake = false;
+            source.spatialBlend = 0f;
+            source.loop = loop;
+            return source;
         }
 
         private void BuildField()
@@ -1550,11 +1677,13 @@ namespace KeepBallMoving
 
             SetGameplayUiVisible(true);
             RestartMatch(false);
+            PlayGameplayBgm();
             ShowMessage($"{GetMatchModeLabel()} 开始");
         }
 
         private void EnterMainMenu()
         {
+            StopGameplayBgm();
             mainMenuOpen = true;
             SetupMainMenuUi();
             if (mainMenuUi != null)
@@ -1645,6 +1774,7 @@ namespace KeepBallMoving
             RestoreGoalPresentationState();
             goalLocked = false;
             SetGoalTriggersEnabled(true);
+            PlayRoundStartSound();
             talentSelectionOpen = false;
             victoryOpen = false;
             talentSecondPickPending = false;
@@ -1726,6 +1856,7 @@ namespace KeepBallMoving
             ClearKickoffLockIfHolder(ball.Holder);
             DestroyActivePhantomPlayer();
             ball.BeginHold(catcher, minHoldRadius, team == Team.Blue ? holdAngularSpeed : -holdAngularSpeed);
+            PlayKickSound();
             ApplyCatchTalents(catcher.Team, catcher.Position);
             ShowMessage($"抓住：{catcher.name}");
         }
@@ -1747,6 +1878,7 @@ namespace KeepBallMoving
             DestroyActivePhantomPlayer();
             redCurrentHoldDelay = RollRedHoldDelay();
             ball.BeginHold(redCatcher, minHoldRadius, -holdAngularSpeed);
+            PlayKickSound();
             ApplyCatchTalents(redCatcher.Team, redCatcher.Position);
             ShowMessage($"红方拿球：{redCatcher.name}");
             return true;
@@ -1765,6 +1897,7 @@ namespace KeepBallMoving
             }
 
             Vector2 releaseDirection = ball.Release(releaseSpeed);
+            PlayKickSound();
             ConsumePassReleaseStamina(holder);
             ClearKickoffLockIfHolder(holder);
             ApplyReleaseTalents(releaseTeam, ball.Position, releaseDirection, releaseSpeed);
@@ -1789,6 +1922,7 @@ namespace KeepBallMoving
             Vector2 target = GetRedReleaseTarget(out float releaseSpeed, out string message);
             float finalSpeed = ApplyRedKickSpeedVariance(releaseSpeed) * GetDirectionalControlReleaseMultiplier(releaseTeam);
             Vector2 releaseDirection = ball.ReleaseToward(target, finalSpeed);
+            PlayKickSound();
             ConsumePassReleaseStamina(holder);
             ClearKickoffLockIfHolder(holder);
             ApplyReleaseTalents(releaseTeam, ball.Position, releaseDirection, finalSpeed);
@@ -1879,6 +2013,7 @@ namespace KeepBallMoving
             {
                 Vector2 origin = ball.Position;
                 Vector2 actualDirection = ball.ReleaseInDirectionFromCurrent(releaseDirection, releaseSpeed);
+                PlayKickSound();
                 ConsumePassReleaseStamina(holder);
                 ApplyReleaseTalents(team, origin, actualDirection, releaseSpeed);
                 if (GetPhantomPlayerUsesRemaining(team) > 0 && HasTalent(team, TalentId.PhantomPlayer))
@@ -1947,6 +2082,7 @@ namespace KeepBallMoving
 
             activePhantomPlayerTeam = team;
             ball.BeginHold(activePhantomPlayer, minHoldRadius, team == Team.Blue ? phantomPlayerHoldAngularSpeed : -phantomPlayerHoldAngularSpeed);
+            PlayKickSound();
             chargeTime = 0f;
             SetHoldChargeArmed(Team.Blue, false);
             SetHoldChargeArmed(Team.Red, false);
@@ -1965,6 +2101,7 @@ namespace KeepBallMoving
 
             Vector2 origin = activePhantomPlayer.Position;
             Vector2 releaseDirection = ball.ReleaseFromHolderPosition(phantomPlayerKickSpeed);
+            PlayKickSound();
             activePhantomPlayer.ConsumeStamina(passReleaseStaminaCost);
             ApplyReleaseTalents(activePhantomPlayerTeam, origin, releaseDirection, phantomPlayerKickSpeed);
             DestroyActivePhantomPlayer();
@@ -2283,6 +2420,7 @@ namespace KeepBallMoving
             Vector2 releaseDirection = holder == activePhantomPlayer
                 ? ball.ReleaseFromHolderPosition(releaseSpeed)
                 : ball.Release(releaseSpeed);
+            PlayKickSound();
             Vector2 origin = ball.Position;
 
             ClearKickoffLockIfHolder(holder);
@@ -2481,6 +2619,7 @@ namespace KeepBallMoving
 
             ClearKickoffLockIfHolder(ball.Holder);
             ball.BeginHold(stealer, minHoldRadius, stealer.Team == Team.Red ? -holdAngularSpeed : holdAngularSpeed);
+            PlayKickSound();
             autoControlCooldownUntil = Time.time + 0.2f;
             ShowMessage($"{(stealer.Team == Team.Blue ? "蓝方" : "红方")}抢断");
             return true;
@@ -2892,6 +3031,7 @@ namespace KeepBallMoving
 
             goalLocked = true;
             SetGoalTriggersEnabled(false);
+            PlayGoalSound();
             Vector2 goalFocusPosition = scoringBall != null ? scoringBall.Position : GetGoalFocusFallback(side);
             if (scoringBall != null)
             {
@@ -3641,6 +3781,7 @@ namespace KeepBallMoving
 
             DestroyEnemyPhantomBallsInShockwave(owner, center, radius);
             CreateShockwaveVisual(owner, center, radius, color);
+            PlayWaveSound();
         }
 
         private void DestroyEnemyPhantomBallsInShockwave(Team owner, Vector2 center, float radius)
