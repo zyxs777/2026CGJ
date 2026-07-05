@@ -17,6 +17,9 @@ namespace KeepBallMoving
         [Header("Match Rules")]
         [SerializeField] private int scoreToWin = 10;
 
+        [Header("Input")]
+        [SerializeField] private float gameplayPrimaryInputInterval = 0.2f;
+
         [Header("Field")]
         [SerializeField] private float fieldWidth = 30f;
         [SerializeField] private float fieldHeight = 17f;
@@ -220,6 +223,7 @@ namespace KeepBallMoving
         private PlayerAgent activePhantomPlayer;
         private Team activePhantomPlayerTeam = Team.Blue;
         private Coroutine activeDashPassRoutine;
+        private PlayerAgent activeDashPassPlayer;
         private bool dashPassActive;
         private PlayerAgent blueSkyGiantPlayer;
         private PlayerAgent redSkyGiantPlayer;
@@ -234,6 +238,12 @@ namespace KeepBallMoving
         private float nextTalentMoveInputTime;
         private int selectedMainMenuIndex;
         private float nextMainMenuMoveInputTime;
+        private float blueNextGameplayPrimaryInputTime;
+        private float redNextGameplayPrimaryInputTime;
+        private float blueHoldChargeStartRealtime;
+        private float redHoldChargeStartRealtime;
+        private bool bluePrimaryReleaseQueued;
+        private bool redPrimaryReleaseQueued;
         private bool rightStickHorizontalMissing;
         private bool showInputDebug;
         private readonly HashSet<string> missingInputAxes = new HashSet<string>();
@@ -404,7 +414,7 @@ namespace KeepBallMoving
 
                     stateText = $"{GetTeamLabel(activePhantomPlayerTeam)}幻影球员控球：按{GetPrimaryActionHint(activePhantomPlayerTeam)}踢出";
 
-                    if (IsPrimaryActionDown(activePhantomPlayerTeam))
+                    if (IsGameplayPrimaryActionDown(activePhantomPlayerTeam))
                     {
                         ReleasePhantomPlayerBall();
                     }
@@ -445,13 +455,13 @@ namespace KeepBallMoving
             bool redCanCatch = IsPvpMode() && FindNearestCatchablePlayer(Team.Red) != null;
             stateText = GetFreeBallStateText(blueCanCatch, redCanCatch);
 
-            if (IsPrimaryActionDown(Team.Blue))
+            if (IsGameplayPrimaryActionDown(Team.Blue))
             {
                 TryCatchBall(Team.Blue);
                 return;
             }
 
-            if (IsPvpMode() && IsPrimaryActionDown(Team.Red))
+            if (IsPvpMode() && IsGameplayPrimaryActionDown(Team.Red))
             {
                 TryCatchBall(Team.Red);
                 return;
@@ -594,6 +604,130 @@ namespace KeepBallMoving
                 KeepBallNewInput.IsLegacyPrimaryUp(GetGamepadIndex(team), ShouldReadLegacyAnyGamepad(team));
         }
 
+        private bool IsPrimaryActionHeld(Team team)
+        {
+            if (KeepBallNewInput.IsPrimaryHeld(GetGamepadIndex(team), ShouldReadAnyGamepad(team)))
+            {
+                return true;
+            }
+
+            if (team == Team.Red)
+            {
+                return Input.GetKey(redPrimaryKey) ||
+                    Input.GetKey(redAlternatePrimaryKey) ||
+                    KeepBallNewInput.IsLegacyPrimaryHeld(GetGamepadIndex(team), false);
+            }
+
+            return Input.GetKey(KeyCode.Space) ||
+                KeepBallNewInput.IsLegacyPrimaryHeld(GetGamepadIndex(team), ShouldReadLegacyAnyGamepad(team));
+        }
+
+        private bool IsGameplayPrimaryActionDown(Team team)
+        {
+            if (Time.unscaledTime < GetNextGameplayPrimaryInputTime(team))
+            {
+                return false;
+            }
+
+            if (!IsPrimaryActionDown(team))
+            {
+                return false;
+            }
+
+            MarkGameplayPrimaryInputUsed(team);
+            return true;
+        }
+
+        private bool ShouldReleaseGameplayPrimaryAction(Team team)
+        {
+            if (!IsHoldChargeArmed(team))
+            {
+                return false;
+            }
+
+            if (IsPrimaryActionUp(team) || !IsPrimaryActionHeld(team))
+            {
+                SetPrimaryReleaseQueued(team, true);
+            }
+
+            if (!GetPrimaryReleaseQueued(team))
+            {
+                return false;
+            }
+
+            float elapsed = Time.unscaledTime - GetHoldChargeStartRealtime(team);
+            return elapsed >= Mathf.Max(0f, gameplayPrimaryInputInterval);
+        }
+
+        private void BeginGameplayHoldCharge(Team team)
+        {
+            SetHoldChargeArmed(team, true);
+            SetHoldChargeStartRealtime(team, Time.unscaledTime);
+            SetPrimaryReleaseQueued(team, false);
+        }
+
+        private float GetNextGameplayPrimaryInputTime(Team team)
+        {
+            return team == Team.Blue ? blueNextGameplayPrimaryInputTime : redNextGameplayPrimaryInputTime;
+        }
+
+        private void MarkGameplayPrimaryInputUsed(Team team)
+        {
+            float nextTime = Time.unscaledTime + Mathf.Max(0f, gameplayPrimaryInputInterval);
+            if (team == Team.Blue)
+            {
+                blueNextGameplayPrimaryInputTime = nextTime;
+            }
+            else
+            {
+                redNextGameplayPrimaryInputTime = nextTime;
+            }
+        }
+
+        private float GetHoldChargeStartRealtime(Team team)
+        {
+            return team == Team.Blue ? blueHoldChargeStartRealtime : redHoldChargeStartRealtime;
+        }
+
+        private void SetHoldChargeStartRealtime(Team team, float value)
+        {
+            if (team == Team.Blue)
+            {
+                blueHoldChargeStartRealtime = value;
+            }
+            else
+            {
+                redHoldChargeStartRealtime = value;
+            }
+        }
+
+        private bool GetPrimaryReleaseQueued(Team team)
+        {
+            return team == Team.Blue ? bluePrimaryReleaseQueued : redPrimaryReleaseQueued;
+        }
+
+        private void SetPrimaryReleaseQueued(Team team, bool queued)
+        {
+            if (team == Team.Blue)
+            {
+                bluePrimaryReleaseQueued = queued;
+            }
+            else
+            {
+                redPrimaryReleaseQueued = queued;
+            }
+        }
+
+        private void ClearGameplayPrimaryInputState()
+        {
+            blueNextGameplayPrimaryInputTime = 0f;
+            redNextGameplayPrimaryInputTime = 0f;
+            blueHoldChargeStartRealtime = 0f;
+            redHoldChargeStartRealtime = 0f;
+            bluePrimaryReleaseQueued = false;
+            redPrimaryReleaseQueued = false;
+        }
+
         private bool IsPhantomActionDown(Team team)
         {
             if (KeepBallNewInput.IsPhantomDown(GetGamepadIndex(team), ShouldReadAnyGamepad(team)))
@@ -672,9 +806,9 @@ namespace KeepBallMoving
             {
                 stateText = $"{GetTeamLabel(team)}持球：按住{GetPrimaryActionHint(team)}蓄力";
 
-                if (IsPrimaryActionDown(team))
+                if (IsGameplayPrimaryActionDown(team))
                 {
-                    SetHoldChargeArmed(team, true);
+                    BeginGameplayHoldCharge(team);
                     chargeTime = 0f;
                     ShowMessage($"{GetTeamLabel(team)}蓄力中");
                 }
@@ -685,7 +819,7 @@ namespace KeepBallMoving
             chargeTime += deltaTime;
             stateText = $"{GetTeamLabel(team)}蓄力 {Mathf.Clamp01(chargeTime / maxChargeTime):P0}";
 
-            if (IsPrimaryActionUp(team))
+            if (ShouldReleaseGameplayPrimaryAction(team))
             {
                 ReleasePlayerHeldBall();
             }
@@ -716,7 +850,7 @@ namespace KeepBallMoving
 
         private string GetPhantomActionHint(Team team)
         {
-            return team == Team.Red ? "右Shift或/或手柄2B" : "Z/手柄1B";
+            return team == Team.Red ? "右Shift或/或手柄2RB" : "Z/手柄1RB";
         }
 
         private string GetFreeBallStateText(bool blueCanCatch, bool redCanCatch)
@@ -1805,6 +1939,7 @@ namespace KeepBallMoving
             redPickedTalentIndex = -1;
             SetHoldChargeArmed(Team.Blue, false);
             SetHoldChargeArmed(Team.Red, false);
+            ClearGameplayPrimaryInputState();
             bluePhantomPlayerUsesRemaining = 0;
             redPhantomPlayerUsesRemaining = 0;
             blueDashPassUsesRemaining = 0;
@@ -1851,6 +1986,7 @@ namespace KeepBallMoving
             lastRedTalentText = "暂无";
             ClearExtraPlayers();
             ResetTalents();
+            ClearGameplayPrimaryInputState();
             ResetRound();
             if (showRestartMessage)
             {
@@ -1879,10 +2015,11 @@ namespace KeepBallMoving
             chargeTime = 0f;
             SetHoldChargeArmed(Team.Blue, false);
             SetHoldChargeArmed(Team.Red, false);
+            ClearGameplayPrimaryInputState();
             bluePhantomPlayerUsesRemaining = HasTalent(Team.Blue, TalentId.PhantomPlayer) ? 1 : 0;
             redPhantomPlayerUsesRemaining = HasTalent(Team.Red, TalentId.PhantomPlayer) ? 1 : 0;
-            blueDashPassUsesRemaining = HasTalent(Team.Blue, TalentId.DashPass) ? 1 : 0;
-            redDashPassUsesRemaining = HasTalent(Team.Red, TalentId.DashPass) ? 1 : 0;
+            blueDashPassUsesRemaining = GetTalentCount(Team.Blue, TalentId.DashPass);
+            redDashPassUsesRemaining = GetTalentCount(Team.Red, TalentId.DashPass);
             bluePhantomPlayerPassWindowActive = false;
             redPhantomPlayerPassWindowActive = false;
             redCurrentHoldDelay = redAutoHoldDelay;
@@ -1946,7 +2083,7 @@ namespace KeepBallMoving
             chargeTime = 0f;
             SetHoldChargeArmed(Team.Blue, false);
             SetHoldChargeArmed(Team.Red, false);
-            SetHoldChargeArmed(team, true);
+            BeginGameplayHoldCharge(team);
             SetPhantomPlayerPassWindowActive(Team.Blue, false);
             SetPhantomPlayerPassWindowActive(Team.Red, false);
             ClearKickoffLockIfHolder(ball.Holder);
@@ -1987,6 +2124,8 @@ namespace KeepBallMoving
             float charge01 = Mathf.Clamp01(chargeTime / maxChargeTime);
             float releaseSpeed = Mathf.Lerp(minReleaseSpeed, maxReleaseSpeed, charge01) * GetDirectionalControlReleaseMultiplier(releaseTeam);
             Vector2 plannedDirection = GetHeldBallReleaseDirection(holder);
+            MarkGameplayPrimaryInputUsed(releaseTeam);
+            SetPrimaryReleaseQueued(releaseTeam, false);
             if (TryStartDashPass(holder, releaseTeam, plannedDirection, releaseSpeed, charge01))
             {
                 return;
@@ -2064,7 +2203,7 @@ namespace KeepBallMoving
                 releaseDirection = team == Team.Red ? Vector2.left : Vector2.right;
             }
 
-            SetDashPassUsesRemaining(team, 0);
+            SetDashPassUsesRemaining(team, Mathf.Max(0, GetDashPassUsesRemaining(team) - 1));
             SetPhantomPlayerPassWindowActive(Team.Blue, false);
             SetPhantomPlayerPassWindowActive(Team.Red, false);
             SetHoldChargeArmed(Team.Blue, false);
@@ -2079,6 +2218,8 @@ namespace KeepBallMoving
         private IEnumerator DashPassRoutine(PlayerAgent holder, Team team, Vector2 releaseDirection, float releaseSpeed, float charge01)
         {
             dashPassActive = true;
+            activeDashPassPlayer = holder;
+            holder.SetDashPassPhantomActive(true);
             holder.SetHoldingAnimation(false);
             holder.SetCatchHighlighted(true);
 
@@ -2121,6 +2262,12 @@ namespace KeepBallMoving
             }
 
             dashPassActive = false;
+            if (holder != null)
+            {
+                holder.SetDashPassPhantomActive(false);
+            }
+
+            activeDashPassPlayer = null;
             activeDashPassRoutine = null;
             autoControlCooldownUntil = Time.time + 0.35f;
             UpdateControlHighlights();
@@ -2132,6 +2279,12 @@ namespace KeepBallMoving
             {
                 StopCoroutine(activeDashPassRoutine);
                 activeDashPassRoutine = null;
+            }
+
+            if (activeDashPassPlayer != null)
+            {
+                activeDashPassPlayer.SetDashPassPhantomActive(false);
+                activeDashPassPlayer = null;
             }
 
             dashPassActive = false;
@@ -3499,7 +3652,7 @@ namespace KeepBallMoving
                     {
                         Id = id,
                         Name = "幻影球员",
-                        Description = "己方传球后可按 Z/B 在球所在位置生成幻影球员，球会绕着幻影球员运动。每次进球后的新一轮最多使用 1 次。",
+                        Description = "己方传球后可按 Z/RB 在球所在位置生成幻影球员，球会绕着幻影球员运动。每次进球后的新一轮最多使用 1 次。",
                         AccentColor = new Color(0.42f, 0.92f, 1f, 1f)
                     };
                 case TalentId.DirectionalControl:
@@ -3523,7 +3676,7 @@ namespace KeepBallMoving
                     {
                         Id = id,
                         Name = "突进传球",
-                        Description = "每轮限 1 次。球员蓄力传球时按住 Z/B，松开传球键后会先沿传球方向突进一段距离，足球停在原地，突进结束后再踢出。",
+                        Description = "每层让每轮可使用次数 +1，最多 3 层。球员蓄力传球时按住 Z/RB，松开传球键后会先沿传球方向突进一段距离，足球停在原地，突进结束后再踢出。",
                         AccentColor = new Color(0.45f, 1f, 0.58f, 1f)
                     };
                 default:
@@ -4173,12 +4326,12 @@ namespace KeepBallMoving
                 case TalentId.ShieldField:
                 case TalentId.PassField:
                 case TalentId.DirectionalControl:
+                case TalentId.DashPass:
                     return 3;
                 case TalentId.ExtraForward:
                 case TalentId.ExtraMidfielder:
                 case TalentId.ExtraDefender:
                 case TalentId.SkyGiant:
-                case TalentId.DashPass:
                     return 1;
                 case TalentId.PhantomPlayer:
                     return 1;
@@ -4359,6 +4512,12 @@ namespace KeepBallMoving
             {
                 redHoldChargeArmed = armed;
             }
+
+            if (!armed)
+            {
+                SetPrimaryReleaseQueued(team, false);
+                SetHoldChargeStartRealtime(team, 0f);
+            }
         }
 
         private int GetPhantomPlayerUsesRemaining(Team team)
@@ -4482,8 +4641,8 @@ namespace KeepBallMoving
             };
 
             string defaultMessage = IsPvpMode()
-                ? "蓝方：空格/Z/手柄1A-B；红方：Enter或右Ctrl/右Shift或/手柄2A-B；M 切 PVE"
-                : "空格/手柄1A 抓球和蓄力，Z/手柄1B 召唤幻影球员，M 切 PVP，R 重置，N 重新开始";
+                ? "蓝方：空格/Z/手柄1A-RB；红方：Enter或右Ctrl/右Shift或/手柄2A-RB；M 切 PVE"
+                : "空格/手柄1A 抓球和蓄力，Z/手柄1RB 召唤幻影球员，M 切 PVP，R 重置，N 重新开始";
             string message = Time.time <= messageUntil ? messageText : defaultMessage;
             float charge01 = Mathf.Clamp01(chargeTime / maxChargeTime);
             float ballSpeed = ball != null ? ball.Velocity.magnitude : 0f;

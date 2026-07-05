@@ -28,6 +28,7 @@ namespace KeepBallMoving
         private SpriteRenderer holdPointRenderer;
         private Transform targetIndicator;
         private GameObject tiredEffectInstance;
+        private PhantomCreator_SpriteRenderer dashPassPhantomCreator;
         private Animator animator;
         private Color baseColor;
         private Color highlightColor;
@@ -116,6 +117,7 @@ namespace KeepBallMoving
             CreateHoldPointVisual(holdPointSprite, baseColor);
             CacheTargetIndicator();
             CacheAnimator();
+            CacheDashPassPhantomCreator();
             ResetStaminaFull();
             SetHoldingAnimation(false);
         }
@@ -284,6 +286,19 @@ namespace KeepBallMoving
             }
 
             knockbackRoutine = StartCoroutine(KnockbackRoutine(targetPosition, Mathf.Max(0.01f, duration)));
+        }
+
+        public void SetDashPassPhantomActive(bool active)
+        {
+            if (dashPassPhantomCreator == null)
+            {
+                CacheDashPassPhantomCreator();
+            }
+
+            if (dashPassPhantomCreator != null)
+            {
+                dashPassPhantomCreator.EnableCreate = active;
+            }
         }
 
         public void SetCatchHighlighted(bool highlighted)
@@ -477,6 +492,42 @@ namespace KeepBallMoving
         {
             targetIndicator = FindChildRecursive(transform, "target");
             SetTargetIndicatorVisible(false);
+        }
+
+        private void CacheDashPassPhantomCreator()
+        {
+            dashPassPhantomCreator = GetComponent<PhantomCreator_SpriteRenderer>();
+            if (dashPassPhantomCreator == null)
+            {
+                return;
+            }
+
+            if (dashPassPhantomCreator.source == null)
+            {
+                dashPassPhantomCreator.source = spriteRenderer != null ? spriteRenderer : GetComponentInChildren<SpriteRenderer>();
+            }
+
+            if (dashPassPhantomCreator.host == null)
+            {
+                dashPassPhantomCreator.host = transform;
+            }
+
+            if (dashPassPhantomCreator.scaleRoot == null)
+            {
+                dashPassPhantomCreator.scaleRoot = transform;
+            }
+
+            if (dashPassPhantomCreator.parent == null && transform.parent != null)
+            {
+                dashPassPhantomCreator.parent = transform.parent;
+            }
+
+            if (dashPassPhantomCreator.sprite_color.a <= 0f)
+            {
+                dashPassPhantomCreator.sprite_color = new Color(baseColor.r, baseColor.g, baseColor.b, dashPassPhantomCreator.startAlpha);
+            }
+
+            dashPassPhantomCreator.EnableCreate = false;
         }
 
         private Transform FindChildRecursive(Transform parent, string childName)

@@ -12,6 +12,7 @@ GameObject:
   - component: {fileID: 21200000}
   - component: {fileID: 11400000}
   - component: {fileID: 4357946935096827518}
+  - component: {fileID: 2557120047401604131}
   m_Layer: 0
   m_Name: KeepBallPlayer
   m_TagString: Untagged
@@ -131,6 +132,27 @@ Animator:
   m_AllowConstantClipSamplingOptimization: 1
   m_KeepAnimatorStateOnDisable: 0
   m_WriteDefaultValuesOnDisable: 0
+--- !u!114 &2557120047401604131
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 100000}
+  m_Enabled: 0
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 43e70737859a2c2449f71e25a803e769, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  parent: {fileID: 400000}
+  interval: 0.1
+  fadeSpeed: 1
+  startAlpha: 0.5
+  endAlpha: 0
+  sprite_color: {r: 1, g: 1, b: 1, a: 0.39215687}
+  host: {fileID: 400000}
+  source: {fileID: 21200000}
+  scaleRoot: {fileID: 400000}
 --- !u!1 &4908933132209293552
 GameObject:
   m_ObjectHideFlags: 0

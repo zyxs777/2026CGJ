@@ -36,14 +36,14 @@ namespace KeepBallMoving
 
         private static readonly KeyCode[] LegacyPhantomButtons =
         {
-            KeyCode.Joystick1Button1,
-            KeyCode.Joystick2Button1,
-            KeyCode.Joystick3Button1,
-            KeyCode.Joystick4Button1,
-            KeyCode.Joystick5Button1,
-            KeyCode.Joystick6Button1,
-            KeyCode.Joystick7Button1,
-            KeyCode.Joystick8Button1
+            KeyCode.Joystick1Button5,
+            KeyCode.Joystick2Button5,
+            KeyCode.Joystick3Button5,
+            KeyCode.Joystick4Button5,
+            KeyCode.Joystick5Button5,
+            KeyCode.Joystick6Button5,
+            KeyCode.Joystick7Button5,
+            KeyCode.Joystick8Button5
         };
 
         public static int GamepadCount
@@ -70,6 +70,12 @@ namespace KeepBallMoving
                 ReadRewiredButton(gamepadIndex, anyGamepad, GamepadButton.Primary, ButtonReadMode.Up);
         }
 
+        public static bool IsPrimaryHeld(int gamepadIndex, bool anyGamepad)
+        {
+            return ReadButton(gamepadIndex, anyGamepad, GamepadButton.Primary, ButtonReadMode.Held) ||
+                ReadRewiredButton(gamepadIndex, anyGamepad, GamepadButton.Primary, ButtonReadMode.Held);
+        }
+
         public static bool IsPhantomDown(int gamepadIndex, bool anyGamepad)
         {
             return ReadButton(gamepadIndex, anyGamepad, GamepadButton.Phantom, ButtonReadMode.Down) ||
@@ -90,6 +96,11 @@ namespace KeepBallMoving
         public static bool IsLegacyPrimaryUp(int gamepadIndex, bool anyGamepad)
         {
             return ReadLegacyButton(gamepadIndex, anyGamepad, GamepadButton.Primary, ButtonReadMode.Up);
+        }
+
+        public static bool IsLegacyPrimaryHeld(int gamepadIndex, bool anyGamepad)
+        {
+            return ReadLegacyButton(gamepadIndex, anyGamepad, GamepadButton.Primary, ButtonReadMode.Held);
         }
 
         public static bool IsLegacyPhantomDown(int gamepadIndex, bool anyGamepad)
@@ -146,7 +157,7 @@ namespace KeepBallMoving
                 ButtonControl primary = GetButton(device, GamepadButton.Primary);
                 ButtonControl phantom = GetButton(device, GamepadButton.Phantom);
                 builder.AppendLine($"{i + 1}. {device.layout} | {device.displayName} | {device.name}");
-                builder.AppendLine($"   A:{FormatButton(primary)}  B:{FormatButton(phantom)}  X:{ReadHorizontal(device):0.00}");
+                builder.AppendLine($"   A:{FormatButton(primary)}  RB:{FormatButton(phantom)}  X:{ReadHorizontal(device):0.00}");
             }
 
             builder.Append(GetRewiredDebugText());
@@ -166,11 +177,11 @@ namespace KeepBallMoving
                 builder.AppendLine($"{i + 1}. {joystickNames[i]}");
             }
 
-            builder.AppendLine($"Any A:{FormatLegacyButton(Input.GetKey(KeyCode.JoystickButton0))}  Any B:{FormatLegacyButton(Input.GetKey(KeyCode.JoystickButton1))}");
+            builder.AppendLine($"Any A:{FormatLegacyButton(Input.GetKey(KeyCode.JoystickButton0))}  Any RB:{FormatLegacyButton(Input.GetKey(KeyCode.JoystickButton5))}");
             builder.AppendLine($"PVP legacy slots: 蓝方={FormatLegacySlot(GetLegacyJoystickSlotForPlayer(0))} / 红方={FormatLegacySlot(GetLegacyJoystickSlotForPlayer(1))}");
             for (int i = 0; i < LegacyPrimaryButtons.Length; i++)
             {
-                builder.AppendLine($"J{i + 1} A:{FormatLegacyButton(Input.GetKey(LegacyPrimaryButtons[i]))}  B:{FormatLegacyButton(Input.GetKey(LegacyPhantomButtons[i]))}");
+                builder.AppendLine($"J{i + 1} A:{FormatLegacyButton(Input.GetKey(LegacyPrimaryButtons[i]))}  RB:{FormatLegacyButton(Input.GetKey(LegacyPhantomButtons[i]))}");
             }
 
             return builder.ToString();
@@ -193,7 +204,7 @@ namespace KeepBallMoving
                 return false;
             }
 
-            int buttonIndex = button == GamepadButton.Primary ? 0 : 1;
+            int buttonIndex = button == GamepadButton.Primary ? 0 : 5;
             if (anyGamepad)
             {
                 foreach (Rewired.Joystick joystick in Rewired.ReInput.controllers.Joysticks)
@@ -277,9 +288,9 @@ namespace KeepBallMoving
             {
                 Rewired.Joystick joystick = joysticks[i];
                 bool primary = joystick.buttonCount > 0 && joystick.GetButton(0);
-                bool phantom = joystick.buttonCount > 1 && joystick.GetButton(1);
+                bool phantom = joystick.buttonCount > 5 && joystick.GetButton(5);
                 builder.AppendLine($"{i + 1}. {joystick.name} | {joystick.hardwareName}");
-                builder.AppendLine($"   A0:{FormatLegacyButton(primary)}  B1:{FormatLegacyButton(phantom)}  buttons:{joystick.buttonCount}");
+                builder.AppendLine($"   A0:{FormatLegacyButton(primary)}  RB5:{FormatLegacyButton(phantom)}  buttons:{joystick.buttonCount}");
             }
 
             return builder.ToString();
@@ -299,7 +310,7 @@ namespace KeepBallMoving
         {
             if (anyGamepad)
             {
-                KeyCode anyKey = button == GamepadButton.Primary ? KeyCode.JoystickButton0 : KeyCode.JoystickButton1;
+                KeyCode anyKey = button == GamepadButton.Primary ? KeyCode.JoystickButton0 : KeyCode.JoystickButton5;
                 switch (mode)
                 {
                     case ButtonReadMode.Down:
@@ -447,12 +458,12 @@ namespace KeepBallMoving
             Gamepad gamepad = device as Gamepad;
             if (gamepad != null)
             {
-                return button == GamepadButton.Primary ? gamepad.buttonSouth : gamepad.buttonEast;
+                return button == GamepadButton.Primary ? gamepad.buttonSouth : gamepad.rightShoulder;
             }
 
             string[] names = button == GamepadButton.Primary
                 ? new[] { "trigger", "buttonSouth", "button0" }
-                : new[] { "buttonEast", "button1", "button2" };
+                : new[] { "rightShoulder", "rightShoulderButton", "shoulderRight", "button5" };
             for (int i = 0; i < names.Length; i++)
             {
                 ButtonControl control = device.TryGetChildControl<ButtonControl>(names[i]);
@@ -462,7 +473,7 @@ namespace KeepBallMoving
                 }
             }
 
-            return GetFallbackButton(device, button == GamepadButton.Primary ? 0 : 1);
+            return GetFallbackButton(device, button == GamepadButton.Primary ? 0 : 5);
         }
 
         private static ButtonControl GetFallbackButton(InputDevice device, int buttonIndex)
