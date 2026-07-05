@@ -30,6 +30,7 @@ namespace KeepBallMoving
 
         [Header("UI")]
         [SerializeField] private KeepBallScoreboard scoreboardPrefab;
+        [SerializeField] private KeepBallMainMenuView mainMenuPrefab;
 
         [Header("Actors")]
         [SerializeField] private int playersPerTeam = 5;
@@ -120,7 +121,7 @@ namespace KeepBallMoving
         [SerializeField] private int phantomBallMaxBounces = 3;
         [SerializeField] private float bigfootForwardCatchBonusPerStack = 0.1f;
         [SerializeField] private float shieldFieldRadius = 3f;
-        [SerializeField] private float shieldFieldPushDistance = 2f;
+        [SerializeField] private float shieldFieldPushDistance = 2f; 
         [SerializeField] private float passFieldRadius = 3f;
         [SerializeField] private float passFieldPushDistance = 2f;
         [SerializeField] private float fieldRadiusBonusPerStack = 0.25f;
@@ -175,6 +176,7 @@ namespace KeepBallMoving
         private Sprite ballSprite;
         private Sprite centerRingSprite;
         private KeepBallScoreboard scoreboardUi;
+        private KeepBallMainMenuView mainMenuUi;
         private Canvas talentCanvas;
         private RectTransform blueTalentPanel;
         private RectTransform redTalentPanel;
@@ -186,6 +188,7 @@ namespace KeepBallMoving
         private float defaultCameraOrthographicSize;
         private float defaultFixedDeltaTime;
         private float chargeTime;
+        private bool mainMenuOpen = true;
         private bool goalLocked;
         private bool victoryOpen;
         private Team winningTeam = Team.Blue;
@@ -251,6 +254,7 @@ namespace KeepBallMoving
         private const string DefaultRedHoldRangePrefabPath = "KeepBallMoving/HoldRangeRed";
         private const string DefaultTalentBadgePrefabPath = "KeepBallMoving/KeepBallTalentBadge";
         private const string DefaultScoreboardPrefabPath = "KeepBallMoving/KeepBallScoreboard";
+        private const string DefaultMainMenuPrefabPath = "KeepBallMoving/KeepBallMainMenu";
         private const string DefaultGoalEffectPrefabPath = "KeepBallMoving/GoalEffect";
         private const string DefaultFieldVisualPrefabPath = "KeepBallMoving/KeepBallField";
         private const string DefaultFieldSpritePath = "KeepBallMoving/BG2";
@@ -305,12 +309,18 @@ namespace KeepBallMoving
             SpawnBall();
             SetupTalentUi();
             SetupScoreboardUi();
-            ResetRound();
+            SetupMainMenuUi();
+            EnterMainMenu();
         }
 
         private void Update()
         {
             if (ball == null)
+            {
+                return;
+            }
+
+            if (mainMenuOpen)
             {
                 return;
             }
@@ -957,6 +967,11 @@ namespace KeepBallMoving
                 scoreboardPrefab = Resources.Load<KeepBallScoreboard>(DefaultScoreboardPrefabPath);
             }
 
+            if (mainMenuPrefab == null)
+            {
+                mainMenuPrefab = Resources.Load<KeepBallMainMenuView>(DefaultMainMenuPrefabPath);
+            }
+
             if (goalEffectPrefab == null)
             {
                 goalEffectPrefab = Resources.Load<GameObject>(DefaultGoalEffectPrefabPath);
@@ -1385,6 +1400,34 @@ namespace KeepBallMoving
             UpdateScoreboardUi();
         }
 
+        private void SetupMainMenuUi()
+        {
+            if (mainMenuUi != null)
+            {
+                mainMenuUi.Initialize(
+                    () => StartMatchFromMainMenu(MatchMode.Pve),
+                    () => StartMatchFromMainMenu(MatchMode.Pvp),
+                    Application.Quit);
+                return;
+            }
+
+            if (mainMenuPrefab != null)
+            {
+                mainMenuUi = Instantiate(mainMenuPrefab, transform);
+            }
+            else
+            {
+                GameObject menuObject = new GameObject("KeepBallMainMenu", typeof(RectTransform));
+                menuObject.transform.SetParent(transform, false);
+                mainMenuUi = menuObject.AddComponent<KeepBallMainMenuView>();
+            }
+
+            mainMenuUi.Initialize(
+                () => StartMatchFromMainMenu(MatchMode.Pve),
+                () => StartMatchFromMainMenu(MatchMode.Pvp),
+                Application.Quit);
+        }
+
         private void UpdateScoreboardUi()
         {
             if (scoreboardUi == null)
@@ -1496,8 +1539,83 @@ namespace KeepBallMoving
             return result;
         }
 
-        private void RestartMatch()
+        private void StartMatchFromMainMenu(MatchMode selectedMode)
         {
+            matchMode = selectedMode;
+            mainMenuOpen = false;
+            if (mainMenuUi != null)
+            {
+                mainMenuUi.SetVisible(false);
+            }
+
+            SetGameplayUiVisible(true);
+            RestartMatch(false);
+            ShowMessage($"{GetMatchModeLabel()} 开始");
+        }
+
+        private void EnterMainMenu()
+        {
+            mainMenuOpen = true;
+            SetupMainMenuUi();
+            if (mainMenuUi != null)
+            {
+                mainMenuUi.SetVisible(true);
+            }
+
+            RestoreGoalPresentationState();
+            goalLocked = false;
+            talentSelectionOpen = false;
+            victoryOpen = false;
+            talentSecondPickPending = false;
+            selectedTalentIndex = 0;
+            nextTalentMoveInputTime = 0f;
+            chargeTime = 0f;
+            blueScore = 0;
+            redScore = 0;
+            nextKickoffTeam = Team.Blue;
+            winningTeam = Team.Blue;
+            lastBlueTalentText = "暂无";
+            lastRedTalentText = "暂无";
+            bluePickedTalentIndex = -1;
+            redPickedTalentIndex = -1;
+            SetHoldChargeArmed(Team.Blue, false);
+            SetHoldChargeArmed(Team.Red, false);
+            bluePhantomPlayerUsesRemaining = 0;
+            redPhantomPlayerUsesRemaining = 0;
+            blueDashPassUsesRemaining = 0;
+            redDashPassUsesRemaining = 0;
+            bluePhantomPlayerPassWindowActive = false;
+            redPhantomPlayerPassWindowActive = false;
+            StopActiveDashPass();
+            DestroyActivePhantomPlayer();
+            ClearPhantomBalls();
+            ClearKickoffLock();
+            ClearExtraPlayers();
+            ResetTalents();
+            ResetTeamToFormation(Team.Blue);
+            ResetTeamToFormation(Team.Red);
+            if (ball != null)
+            {
+                ball.FreezeForGoalPresentation(Vector2.zero);
+            }
+
+            SetGoalTriggersEnabled(false);
+            SetGameplayUiVisible(false);
+            UpdateControlHighlights();
+        }
+
+        private void SetGameplayUiVisible(bool visible)
+        {
+            if (talentCanvas != null)
+            {
+                talentCanvas.gameObject.SetActive(visible);
+            }
+        }
+
+        private void RestartMatch(bool showRestartMessage = true)
+        {
+            mainMenuOpen = false;
+            SetGameplayUiVisible(true);
             blueScore = 0;
             redScore = 0;
             nextKickoffTeam = Team.Blue;
@@ -1509,7 +1627,10 @@ namespace KeepBallMoving
             ClearExtraPlayers();
             ResetTalents();
             ResetRound();
-            ShowMessage("重新开始");
+            if (showRestartMessage)
+            {
+                ShowMessage("重新开始");
+            }
         }
 
         private void ToggleMatchMode()
@@ -4061,12 +4182,19 @@ namespace KeepBallMoving
 
         private void OnGUI()
         {
+            if (mainMenuOpen)
+            {
+                return;
+            }
+
             DrawGoalBanner();
 
             if (showStatusDebugUi)
             {
                 DrawStatusDebug();
             }
+
+            DrawReturnToMainMenuButton();
 
             if (talentSelectionOpen)
             {
@@ -4081,6 +4209,29 @@ namespace KeepBallMoving
             if (victoryOpen)
             {
                 DrawVictoryUi();
+            }
+        }
+
+        private void DrawReturnToMainMenuButton()
+        {
+            if (talentSelectionOpen || victoryOpen)
+            {
+                return;
+            }
+
+            GUIStyle buttonStyle = new GUIStyle()
+            {
+                alignment = TextAnchor.MiddleCenter,
+                fontSize = 16,
+                fontStyle = FontStyle.Bold,
+                normal = { textColor = Color.white },
+                hover = { textColor = Color.white },
+                active = { textColor = Color.white }
+            };
+            Rect buttonRect = new Rect(Screen.width - 132f, 16f, 116f, 38f);
+            if (GUI.Button(buttonRect, "主界面", buttonStyle))
+            {
+                EnterMainMenu();
             }
         }
 
